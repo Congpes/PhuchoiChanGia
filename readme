@@ -1,0 +1,72 @@
+
+
+> **"Hệ thống Phân tích Dáng đi Không xâm lấn (Markerless Gait Analysis) hỗ trợ Đánh giá và Phục hồi Chân năng cho Người sử dụng Chân giả dựa trên Trí tuệ Nhân tạo."**
+
+### 2. Tên thương mại / Viết tắt (Dùng để gọi nhanh trong nhóm):
+
+> **AI-ProGait** *(AI Prosthetic Gait Analysis System)*
+
+---
+
+## I. TÓM TẮT CỐT LÕI (EXECUTIVE SUMMARY)
+
+**AI-ProGait** là một giải pháp phần mềm y sinh thay thế cho các hệ thống phòng Lab cảm biến quang học đắt đỏ (tốn hàng tỷ đồng như Vicon).
+
+Thay vì phải dán các bóng phản quang lên người bệnh nhân, hệ thống sử dụng **Camera/Webcam thông thường kết hợp với AI Thị giác máy tính (MediaPipe Pose Heavy Model)** để bám sát khung xương 2D theo thời gian thực.
+
+🎯 **Đột phá cốt lõi của giải pháp:** Sử dụng chính **"Chân Lành" (Healthy Leg)** của bệnh nhân làm **Thước đo Tiêu chuẩn Vàng (Personalized Baseline)** để thẩm định độ đồng bộ, hỗ trợ bác sĩ chỉnh hình cân chỉnh khớp cơ khí, và cung cấp phản hồi sinh học (Biofeedback) giúp bệnh nhân tập đi đều bước.
+
+---
+
+## II. VẤN ĐỀ THỰC TẾ & GIẢI PHÁP CỦA NHÓM
+
+| Vấn đề hiện tại ở các Xưởng Chỉnh Hình / Bệnh viện | Giải pháp đột phá của AI-ProGait |
+| --- | --- |
+| **Bác sĩ cân chỉnh theo cảm tính:** Thợ chỉnh hình điều chỉnh phuộc thủy lực/lò xo gối chân giả chỉ bằng cách nhìn mắt thường xem bệnh nhân đi có khập khiễng hay không. | **Số hóa & Định lượng chuẩn xác:** AI đo exacly góc gập gối (ví dụ: Chân lành co $62^\circ$, Chân giả chỉ co $40^\circ \rightarrow$ Bác sĩ biết cần nới lỏng khớp ra chính xác bao nhiêu). |
+| **Bệnh nhân tập đi bị sai dáng:** Người mất chân sợ ngã nên hay có tật nhón chân, quăng hông sang bên (Hip Circumduction), vẹo cột sống lâu ngày gây liệt. | **Gương phản hồi sinh học (Biofeedback):** Hiển thị trực tiếp đồ thị 2 chân song song trên màn hình lớn khi đi trên máy tập để bệnh nhân tự điều chỉnh lực bước đi. |
+| **Thiếu dữ liệu cá nhân hóa:** Chiều cao và sải chân mỗi người khác nhau, không thể áp dụng một con số góc gối "chuẩn chung" cho tất cả. | **Thu thập thông số mẫu (Baseline Scan):** Quét chân lành trong 10 giây để tạo ra đường cong nhịp điệu sinh học riêng biệt cho từng cá nhân. |
+
+---
+
+## III. THIẾT LẬP PHẦN CỨNG (MÔ HÌNH 2 CAMERA CHUẨN LAB)
+
+Để khắc phục nhược điểm AI bị che khuất điểm khớp (Self-Occlusion), hệ thống bố trí 2 camera chuyên biệt:
+
+* 🎥 **Camera 1 (Chính diện - Frontal Plane):** Đặt phía trước, hướng trực diện vào bệnh nhân.
+* *Nhiệm vụ:* Đo **độ đối xứng toàn thân**, phát hiện dáng đi lệch trục, vẹo vai, nghiêng xương chậu.
+
+
+* 🎥 **Camera 2 (Góc nghiêng $90^\circ$ - Sagittal Plane):** Đặt ngang bên cạnh (ưu tiên đặt cùng phía với chiếc chân cần phân tích).
+* *Nhiệm vụ:* Đo **góc động học khớp xương** (Hông - Gối - Cổ chân) và trích xuất chu kỳ bước đi (nhấc chân, gót chạm đất).
+
+
+
+---
+
+## IV. QUY TRÌNH HOẠT ĐỘNG 3 BƯỚC (CLINICAL WORKFLOW)
+
+```
+[BƯỚC 1: QUÉT CHÂN LÀNH 10s] ➔ [BƯỚC 2: QUÉT CHÂN GIẢ] ➔ [BƯỚC 3: SO SÁNH & XUẤT BÁO CÁO]
+ (Tạo đường cong chuẩn Baseline)   (Đo góc gập thực tế Realtime)   (Tính độ lệch sai số cho Bác sĩ)
+
+```
+
+1. **Bước 1: Thu thập Chuẩn cá nhân (Baseline Calibration - 10 giây)**
+* Bệnh nhân bước đi tự nhiên trên thảm hoặc máy chạy bộ.
+* Kỹ thuật viên chọn chế độ "Quét Chân Lành". AI thu thập mảng góc gối liên tục trong 10 giây (khoảng 4 - 6 chu kỳ bước đi).
+* Hệ thống tự động lọc ra: **Góc gập tối đa (Max Co)**, **Góc duỗi tối đa (Min Duỗi)** và vẽ nên **Đường cong chuẩn lý thuyết**.
+
+
+2. **Bước 2: Phân tích Chân Giả (Prosthetic Evaluation)**
+* Bệnh nhân đeo chân giả vào bước đi.
+* AI ghi nhận đường cong dao động góc khớp gối của chân giả theo thời gian thực.
+
+
+3. **Bước 3: Chồng chập Đồ thị & Đánh giá (Comparative Analysis)**
+* Hệ thống đặt 2 đường cong (Chân Lành vs Chân Giả) lên cùng một biểu đồ.
+* Tính toán độ lệch (Error Margin) và hiển thị cảnh báo: *"Chân giả đang đi trễ nhịp 0.2 giây"* hoặc *"Biên độ gập gối đang thiếu $15^\circ$"*.
+
+
+
+---
+
