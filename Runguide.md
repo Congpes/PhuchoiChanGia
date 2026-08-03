@@ -1,62 +1,143 @@
-# Hướng dẫn khởi chạy hệ thống AI-ProGait
+# Hướng dẫn cài đặt và chạy AI-ProGait
 
-Tài liệu này hướng dẫn cách chạy song song Python Backend (MediaPipe Pose analysis) và Flutter Frontend (Giao diện phân tích dáng đi).
+Tài liệu này hướng dẫn cài dự án trên một máy Windows mới, chạy FastAPI backend, Flutter Web frontend và cấu hình camera.
 
----
+## 1. Yêu cầu hệ thống
 
-## 1. Khởi chạy Backend (Python FastAPI)
+Cài đặt các công cụ sau:
 
-Backend chịu trách nhiệm mở Webcam, nhận dạng khung xương bằng AI (MediaPipe), tính toán góc khớp thời gian thực và cung cấp dữ liệu qua API.
+- Git.
+- Python 3.10.
+- Flutter SDK 3.44.4 hoặc phiên bản tương thích.
+- Google Chrome.
+- Webcam và quyền truy cập camera trên Windows.
 
-Cách nhanh nhất là nhấp đúp chuột vào tệp **`chay_backend.bat`** ở thư mục gốc của dự án. Tệp này sẽ tự động kích hoạt môi trường ảo và khởi chạy server.
+Kiểm tra môi trường:
 
-Hoặc bạn có thể khởi chạy thủ công bằng dòng lệnh:
+```powershell
+git --version
+python --version
+flutter doctor
+```
 
-1. Mở Terminal mới tại thư mục dự án.
-2. Di chuyển vào thư mục `backend`:
-   ```powershell
-   cd backend
-   ```
-3. Khởi chạy máy chủ trực tiếp bằng python trong môi trường ảo (không cần bước activate):
-   ```powershell
-   .\venv\Scripts\python main.py
-   ```
-   *Khi chạy thành công, Terminal sẽ hiển thị dòng thông báo `🎥 Webcam capture thread started successfully.` và chạy ở cổng `http://127.0.0.1:8000`.*
+## 2. Clone dự án
 
----
+Clone trực tiếp branch `Cong`:
 
-## 2. Khởi chạy Frontend (Flutter Web)
+```powershell
+git clone -b Cong --single-branch https://github.com/Congpes/PhuchoiChanGia.git
+cd PhuchoiChanGia
+```
 
-Frontend chịu trách nhiệm hiển thị giao diện phân tích dáng đi kiểu phòng Lab, vẽ đồ thị so sánh góc khớp và đưa ra khuyến nghị điều chỉnh.
+## 3. Cài đặt backend lần đầu
 
-1. Mở một cửa sổ Terminal khác tại thư mục dự án.
-2. Di chuyển vào thư mục `frontend_app`:
-   ```powershell
-   cd frontend_app
-   ```
-3. Khởi chạy ứng dụng trên trình duyệt Chrome:
-   ```powershell
-   flutter run -d chrome
-   ```
-   *Trình duyệt Chrome sẽ tự động mở trang ứng dụng dạng Web App.*
+Môi trường ảo `backend/venv` không được lưu trên Git. Mỗi máy chỉ cần tạo và cài dependency một lần:
 
----
+```powershell
+python -m venv backend\venv
+backend\venv\Scripts\python.exe -m pip install --upgrade pip
+backend\venv\Scripts\python.exe -m pip install fastapi==0.139.0 uvicorn==0.50.0 opencv-contrib-python==5.0.0.93 mediapipe==0.10.9 numpy==2.2.6 scipy==1.15.3
+```
 
-## 3. Các lưu ý & Khắc phục sự cố
+Khởi động backend:
 
-### ⚠️ Lỗi camera sáng đèn nhưng màn hình đen
-* **Nguyên nhân**: Do camera đang bị khóa bởi ứng dụng khác (ví dụ: Chrome chiếm dụng camera trước khi Python khởi động, hoặc có một tiến trình Python cũ chạy ngầm chưa tắt).
-* **Giải quyết**: 
-  1. Tắt hết các tab Chrome chạy ứng dụng.
-  2. Mở Task Manager hoặc gõ lệnh sau ở PowerShell để tắt tiến trình Python cũ:
-     ```powershell
-     Stop-Process -Name python -Force
-     ```
-  3. Chạy lại Backend (`python main.py`) trước, sau đó mới khởi động Frontend trên Chrome.
+```powershell
+backend\venv\Scripts\python.exe backend\main.py
+```
 
-### ⚠️ VS Code báo lỗi gạch đỏ ở các lệnh `import` trong `main.py`
-* **Nguyên nhân**: VS Code đang dùng trình biên dịch Python của Windows thay vì môi trường ảo `venv`.
-* **Giải quyết**: 
-  1. Nhấn `Ctrl + Shift + P` (hoặc `F1`) để mở thanh lệnh trong VS Code.
-  2. Gõ và chọn: **`Python: Select Interpreter`**.
-  3. Chọn đường dẫn có chứa chữ **`venv`** (ví dụ: `.\venv\Scripts\python.exe`).
+Backend chạy tại:
+
+```text
+http://127.0.0.1:8000
+```
+
+Kiểm tra nhanh API và camera:
+
+```text
+http://127.0.0.1:8000/status
+http://127.0.0.1:8000/video_feed_1
+```
+
+Luôn dùng Python trong `backend/venv`. Lệnh `python backend/main.py` có thể báo thiếu `cv2` nếu Python hệ thống chưa được cài dependency.
+
+## 4. Cài đặt frontend lần đầu
+
+Mở một terminal khác tại thư mục dự án:
+
+```powershell
+cd frontend_app
+flutter pub get
+flutter run -d chrome
+```
+
+Phải khởi động backend trước frontend để các luồng MJPEG và API ở cổng `8000` sẵn sàng.
+
+## 5. Chạy trong quá trình phát triển
+
+Khi Flutter đang chạy, đặt con trỏ vào terminal Flutter và dùng:
+
+- `r`: hot reload cho thay đổi giao diện đơn giản.
+- `R`: hot restart khi sửa import, state khởi tạo, `main()`, HTML platform view hoặc luồng camera.
+- `q`: dừng ứng dụng.
+
+Nhấn `F5` trong Chrome chỉ tải lại bản JavaScript đã biên dịch gần nhất; nó không biên dịch lại mã Dart.
+
+Không chạy `flutter clean` thường xuyên. Lệnh này xóa cache và khiến lần build tiếp theo lâu hơn. Chỉ dùng khi cache build thực sự bị lỗi.
+
+## 6. Chế độ một camera hiện tại
+
+Backend mặc định chạy chế độ một camera:
+
+- Camera laptop ở index `0`.
+- Camera laptop là nguồn MediaPipe phân tích dáng đi.
+- Hai endpoint `/video_feed_0` và `/video_feed_1` tạm dùng chung nguồn hình.
+- OpenCV sử dụng DirectShow trên Windows để tránh lỗi MSMF không mở được webcam.
+
+Không mở đồng thời Zoom, Teams, ứng dụng Camera hoặc phần mềm khác đang chiếm webcam.
+
+## 7. Chuyển sang hai camera sau này
+
+Khi đã gắn đủ hai camera, cấu hình trong PowerShell trước khi chạy backend:
+
+```powershell
+$env:SINGLE_CAMERA_MODE="false"
+$env:CAMERA_FRONTAL_INDEX="0"
+$env:CAMERA_SAGITTAL_INDEX="1"
+backend\venv\Scripts\python.exe backend\main.py
+```
+
+Quy ước:
+
+- Camera frontal: quay chính diện, dùng đánh giá cân bằng và độ nghiêng xương chậu.
+- Camera sagittal: quay ngang 90 độ, dùng phân tích hông, gối và cổ chân.
+
+Nếu thứ tự camera trên máy khác nhau, đổi hai giá trị index và chạy lại backend.
+
+## 8. Khắc phục sự cố
+
+### Backend báo `No module named cv2`
+
+Đang dùng sai Python. Chạy lại bằng:
+
+```powershell
+backend\venv\Scripts\python.exe backend\main.py
+```
+
+### Camera không hiển thị
+
+1. Kiểm tra backend còn chạy.
+2. Mở trực tiếp `http://127.0.0.1:8000/video_feed_1` trên Chrome.
+3. Đóng các ứng dụng khác đang sử dụng webcam.
+4. Kiểm tra quyền camera trong Windows Settings.
+5. Hot restart Flutter bằng `R` thay vì chỉ nhấn F5 trên Chrome.
+
+### Flutter chạy lần đầu rất lâu
+
+- Lần build Flutter Web đầu tiên có thể mất vài phút.
+- Giữ terminal chạy và dùng hot reload/hot restart.
+- Không chạy `flutter pub get` lại nếu `pubspec.yaml` không thay đổi.
+- Không xóa thư mục `build` hoặc `.dart_tool` nếu không có lỗi cache.
+
+### Máy mới không có dữ liệu bệnh nhân
+
+Đây là hành vi bình thường. File SQLite là dữ liệu runtime cục bộ và không được đẩy lên Git. Backend sẽ tạo database mới khi khởi động lần đầu.
