@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
-import '../services/mock_gait_service.dart';
+import '../config/measurement_config.dart';
 import '../theme/app_theme.dart';
 
 class AnalysisSidebar extends StatelessWidget {
@@ -57,11 +57,11 @@ class AnalysisSidebar extends StatelessWidget {
                 _SectionTitle('Cấu hình'),
                 _LegSelector(
                   label: 'Chân lành',
-                  leftSelected: session.healthyLeg == LegSide.left,
-                  onLeft: () => provider.setHealthyLeg(LegSide.left),
-                  onRight: () => provider.setHealthyLeg(LegSide.right),
+                  leftSelected: provider.activePatient?.healthyLeg == LegSide.left,
+                  onLeft: () {},
+                  onRight: () {},
                 ),
-                _ProstheticSelector(session: session, provider: provider),
+                _ProstheticSelector(provider: provider),
                 const SizedBox(height: 12),
                 _SectionTitle('Recording'),
                 _RecordingControl(provider: provider, session: session),
@@ -91,7 +91,7 @@ class AnalysisSidebar extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: FilledButton.icon(
-                      onPressed: provider.goToAdjustPhase,
+                      onPressed: provider.startRescan,
                       icon: const Icon(Icons.build_outlined, size: 18),
                       label: const Text('Đã chỉnh → Quét lại'),
                     ),
@@ -319,13 +319,13 @@ class _LegChip extends StatelessWidget {
 }
 
 class _ProstheticSelector extends StatelessWidget {
-  const _ProstheticSelector({required this.session, required this.provider});
+  const _ProstheticSelector({required this.provider});
 
-  final GaitSession session;
   final SessionProvider provider;
 
   @override
   Widget build(BuildContext context) {
+    final patient = provider.activePatient;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Column(
@@ -333,20 +333,18 @@ class _ProstheticSelector extends StatelessWidget {
         children: [
           const Text('Chân giả', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 6),
-          DropdownButtonFormField<ProstheticSide>(
-            value: session.prostheticLeg,
+          DropdownButtonFormField<LegSide>(
+            value: patient?.prostheticLeg,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               border: OutlineInputBorder(),
             ),
             items: const [
-              DropdownMenuItem(value: ProstheticSide.left, child: Text('Chân trái (giả)')),
-              DropdownMenuItem(value: ProstheticSide.right, child: Text('Chân phải (giả)')),
+              DropdownMenuItem(value: LegSide.left, child: Text('Chân trái (giả)')),
+              DropdownMenuItem(value: LegSide.right, child: Text('Chân phải (giả)')),
             ],
-            onChanged: (v) {
-              if (v != null) provider.setProstheticLeg(v);
-            },
+            onChanged: (v) {},
           ),
         ],
       ),
@@ -362,7 +360,7 @@ class _RecordingControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = MockGaitService.recordDurationSec - session.recordingElapsedSec;
+    final remaining = MeasurementConfig.recordingDurationSec - session.recordingElapsedSec;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -371,7 +369,7 @@ class _RecordingControl extends StatelessWidget {
         children: [
           if (session.isRecording)
             LinearProgressIndicator(
-              value: session.recordingElapsedSec / MockGaitService.recordDurationSec,
+              value: session.recordingElapsedSec / MeasurementConfig.recordingDurationSec,
               backgroundColor: AppColors.border,
               color: AppColors.critical,
             ),

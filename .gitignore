@@ -1,6 +1,7 @@
 # Python
 backend/venv/
 __pycache__/
+backend/*.db
 
 # Flutter
 frontend_app/build/

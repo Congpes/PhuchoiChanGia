@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/session_provider.dart';
-import '../services/mock_gait_service.dart';
+import '../config/measurement_config.dart';
 import '../theme/app_theme.dart';
 
 class TimelineBar extends StatefulWidget {
@@ -19,7 +19,7 @@ class _TimelineBarState extends State<TimelineBar> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>().session;
-    final maxSec = MockGaitService.recordDurationSec;
+    final maxSec = MeasurementConfig.recordingDurationSec;
 
     return Container(
       height: 84,

@@ -50,10 +50,36 @@ class _TabAnalysisState extends State<TabAnalysis> {
     final session = provider.activeSession;
 
     if (patient == null || session == null) {
-      return const Center(
-        child: Text(
-          'Chưa có dữ liệu phân tích. Vui lòng chọn bệnh nhân và thực hiện quét ở Tab Quét.',
-          style: TextStyle(color: AppColors.textSecondary),
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.person_search_outlined, size: 64, color: AppColors.textSecondary),
+            const SizedBox(height: 16),
+            const Text(
+              'Chưa có dữ liệu phân tích',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Vui lòng chọn bệnh nhân và bắt đầu phiên khám để thực hiện quét.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => provider.setTabIndex(0),
+              icon: const Icon(Icons.people_outline, color: Colors.black),
+              label: const Text(
+                'QUAY LẠI HỒ SƠ BỆNH NHÂN',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -61,6 +87,41 @@ class _TabAnalysisState extends State<TabAnalysis> {
     // Check if we only have baseline
     final hasOnlyBaseline = session.baseline != null && session.scans.isEmpty;
     final activeScan = session.activeScan;
+
+    if (session.baseline == null && session.scans.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.analytics_outlined, size: 64, color: AppColors.textSecondary),
+            const SizedBox(height: 16),
+            const Text(
+              'Chưa có dữ liệu phân tích',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Vui lòng thực hiện quét Baseline hoặc đánh giá dáng đi ở Tab Quét để xem kết quả.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => provider.setTabIndex(2),
+              icon: const Icon(Icons.videocam_outlined, color: Colors.black),
+              label: const Text(
+                'QUAY LẠI TAB QUÉT',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     // Prefill controllers if scan already has adjustment data saved
     if (activeScan != null && activeScan.id != 'baseline') {
@@ -86,14 +147,30 @@ class _TabAnalysisState extends State<TabAnalysis> {
                   color: AppColors.panel,
                   border: Border(bottom: BorderSide(color: AppColors.border)),
                 ),
-                child: Text(
-                  hasOnlyBaseline
-                      ? 'Đồ thị nhịp điệu sinh học chuẩn (Baseline)'
-                      : 'Đồ thị so sánh: Chân lành (Baseline) vs ${activeScan?.label ?? 'Chân giả'}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.accent),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: AppColors.accent, size: 20),
+                      onPressed: () => provider.setTabIndex(2),
+                      tooltip: 'Quay lại Quét & Ghi hình',
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      hasOnlyBaseline
+                          ? 'Đồ thị nhịp điệu sinh học chuẩn (Baseline)'
+                          : 'Đồ thị so sánh: Chân lành (Baseline) vs ${activeScan?.label ?? 'Chân giả'}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.accent),
+                    ),
+                  ],
                 ),
               ),
-              const Expanded(child: MetricsGrid()),
+              Expanded(
+                child: MetricsGrid(
+                  scan: activeScan ?? session.baseline!,
+                  baseline: session.baseline,
+                  patient: patient,
+                ),
+              ),
             ],
           ),
         ),
@@ -153,125 +230,146 @@ class _TabAnalysisState extends State<TabAnalysis> {
                   ),
                 ),
               ] else ...[
-                if (activeScan != null) ...[
+                // Card 1: AI Recommendations
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.panel,
+                    border: Border.all(color: AppColors.border),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '1. ĐỀ XUẤT TINH CHỈNH AI',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.accent, letterSpacing: 0.5),
+                      ),
+                      const SizedBox(height: 12),
+                      ...session.recommendations.map((r) => _buildRecommendationCard(r)),
+                      if (session.recommendations.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            'Chưa phát hiện sai lệch nghiêm trọng. Dáng đi đạt độ đối xứng cao.',
+                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // Card 2: Mechanic Adjustment Logging (Only show if active scan is a prosthetic evaluation, not baseline)
+                if (activeScan != null && activeScan.id != 'baseline')
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
                       color: AppColors.panel,
-                      borderRadius: BorderRadius.circular(6),
                       border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'THÔNG SỐ DI CHUYỂN',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                          '2. GHI NHẬN CĂN CHỈNH CƠ KHÍ',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.accentGreen, letterSpacing: 0.5),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '• Nhịp bước: ${activeScan.cadence?.toStringAsFixed(0) ?? "N/A"} bước/phút',
-                          style: const TextStyle(fontSize: 12),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Nhập thông số khớp đã điều chỉnh thực tế ngoài đời để so sánh hiệu quả sau khi quét lại.',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, height: 1.3),
                         ),
-                        Text(
-                          '• Sải chân: ${activeScan.strideLength?.toStringAsFixed(2) ?? "N/A"} m',
-                          style: const TextStyle(fontSize: 12),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: _degreesController,
+                          decoration: const InputDecoration(
+                            labelText: 'Số độ tinh chỉnh thực tế (độ)',
+                            hintText: 'Ví dụ: 10',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          keyboardType: TextInputType.number,
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _notesController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'Mô tả chi tiết chỉnh sửa',
+                            hintText: 'Ví dụ: Nới lỏng phuộc gối thêm 10 độ...',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: provider.isLoading ? null : () => _saveAdjustment(context, provider),
+                            icon: const Icon(Icons.save_outlined, size: 18),
+                            label: const Text('LƯU THÔNG SỐ CĂN CHỈNH', style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.sidebar,
+                              foregroundColor: Colors.white,
+                              side: const BorderSide(color: AppColors.border),
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                ],
-                const Text(
-                  'Gợi ý tinh chỉnh từ AI',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                ...session.recommendations.map((r) => _buildRecommendationCard(r)),
-                if (session.recommendations.isEmpty)
-                  const Text(
-                    'Chưa có đề xuất nào.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  ),
 
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-
-                // Technician Adjustment Form
-                const Text(
-                  'Ghi nhận căn chỉnh cơ khí',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.accent),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Nhập thông số khớp đã điều chỉnh thực tế trên chân giả để so sánh kết quả sau khi quét lại.',
-                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _degreesController,
-                  decoration: const InputDecoration(
-                    labelText: 'Số độ tinh chỉnh thực tế (độ)',
-                    hintText: 'Ví dụ: 12',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                // Card 3: Action Controls
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.panel,
+                    border: Border.all(color: AppColors.border),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _notesController,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Mô tả chi tiết chỉnh sửa',
-                    hintText: 'Ví dụ: Nới lỏng khớp gối phải thêm 12 độ để cải thiện biên độ gập...',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: provider.isLoading ? null : () => _saveAdjustment(context, provider),
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('LƯU THÔNG SỐ CĂN CHỈNH', style: TextStyle(fontWeight: FontWeight.bold)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.panel,
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: AppColors.border),
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-                const Divider(),
-                const SizedBox(height: 16),
-
-                // Action controls: Rescan or view history
-                const Text('Hành động tiếp theo', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary)),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () {
-                    _degreesController.clear();
-                    _notesController.clear();
-                    provider.startRescan();
-                  },
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('QUÉT LẠI CHÂN GIẢ (RESCAN)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () => provider.setTabIndex(3), // go to history
-                  icon: const Icon(Icons.history, size: 18),
-                  label: const Text('XEM LỊCH SỬ & BÁO CÁO'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.textSecondary,
-                    side: const BorderSide(color: AppColors.border),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '3. HÀNH ĐỘNG TIẾP THEO',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.5),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            _degreesController.clear();
+                            _notesController.clear();
+                            provider.startRescan();
+                          },
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('QUÉT LẠI CHÂN GIẢ (RESCAN)', style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.accent,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => provider.setTabIndex(3), // go to history
+                          icon: const Icon(Icons.history, size: 18),
+                          label: const Text('XEM LỊCH SỬ & BÁO CÁO'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textSecondary,
+                            side: const BorderSide(color: AppColors.border),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

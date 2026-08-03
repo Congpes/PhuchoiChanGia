@@ -5,15 +5,16 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/gait_data.dart';
-import '../services/mock_gait_service.dart';
+import '../config/measurement_config.dart';
+import '../services/gait_analysis_service.dart';
 
 class SessionProvider extends ChangeNotifier {
-  SessionProvider({MockGaitService? gaitService})
-      : _gaitService = gaitService ?? MockGaitService() {
+  SessionProvider({GaitAnalysisService? gaitAnalysisService})
+      : _gaitAnalysisService = gaitAnalysisService ?? const GaitAnalysisService() {
     fetchPatients();
   }
 
-  final MockGaitService _gaitService;
+  final GaitAnalysisService _gaitAnalysisService;
   List<Patient> _patients = [];
   Patient? _activePatient;
   GaitSession? _activeSession;
@@ -44,7 +45,7 @@ class SessionProvider extends ChangeNotifier {
 
   void setPlaybackSec(double sec) {
     if (_activeSession != null) {
-      _activeSession!.playbackSec = sec.clamp(0, MockGaitService.recordDurationSec);
+      _activeSession!.playbackSec = sec.clamp(0, MeasurementConfig.recordingDurationSec);
       notifyListeners();
     }
   }
@@ -61,13 +62,25 @@ class SessionProvider extends ChangeNotifier {
         _patients = list.map((x) => _parsePatient(x)).toList();
         if (_patients.isNotEmpty) {
           if (_activePatient != null) {
-            _activePatient = _patients.firstWhere((p) => p.id == _activePatient!.id, orElse: () => _patients.first);
+            final index = _patients.indexWhere((p) => p.id == _activePatient!.id);
+            if (index != -1) {
+              _activePatient = _patients[index];
+              if (_activePatient!.sessions.isNotEmpty) {
+                if (_activeSession != null) {
+                  final sIndex = _activePatient!.sessions.indexWhere((s) => s.id == _activeSession!.id);
+                  _activeSession = sIndex != -1 ? _activePatient!.sessions[sIndex] : _activePatient!.sessions.last;
+                } else {
+                  _activeSession = _activePatient!.sessions.last;
+                }
+              } else {
+                _activeSession = null;
+              }
+            } else {
+              _activePatient = null;
+              _activeSession = null;
+            }
           } else {
-            _activePatient = _patients.first;
-          }
-          if (_activePatient!.sessions.isNotEmpty) {
-            _activeSession = _activePatient!.sessions.last;
-          } else {
+            _activePatient = null;
             _activeSession = null;
           }
         }
@@ -81,6 +94,7 @@ class SessionProvider extends ChangeNotifier {
 
   Patient _parsePatient(Map<String, dynamic> json) {
     final sessionsList = json['sessions'] as List? ?? [];
+    final notesList = json['clinicalNotes'] as List? ?? [];
     return Patient(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
@@ -88,8 +102,23 @@ class SessionProvider extends ChangeNotifier {
       heightCm: (json['heightCm'] as num?)?.toDouble() ?? 170.0,
       weightKg: (json['weightKg'] as num?)?.toDouble() ?? 60.0,
       healthyLeg: json['healthyLeg'] == 'LEFT' ? LegSide.left : LegSide.right,
-      prostheticLeg: json['prostheticLeg'] == 'LEFT' ? ProstheticSide.left : ProstheticSide.right,
+      prostheticLeg: json['prostheticLeg'] == 'LEFT' ? LegSide.left : LegSide.right,
+      injuryHistory: json['injuryHistory'] ?? '',
+      treatmentGoals: json['treatmentGoals'] ?? '',
+      clinicalNotes: notesList.map((x) => _parseNote(x)).toList(),
       sessions: sessionsList.map((x) => _parseSession(x)).toList(),
+    );
+  }
+
+  ClinicalNote _parseNote(Map<String, dynamic> json) {
+    return ClinicalNote(
+      id: json['id'] ?? '',
+      patientId: json['patientId'] ?? '',
+      sessionId: json['sessionId'] ?? '',
+      pinnedScanId: json['pinnedScanId'],
+      noteType: json['noteType'] ?? 'history',
+      content: json['content'] ?? '',
+      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
     );
   }
 
@@ -99,6 +128,7 @@ class SessionProvider extends ChangeNotifier {
       id: json['id'] ?? '',
       createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
       phase: SessionPhase.analyze,
+      isPracticeMode: json['isPracticeMode'] == 1 || json['isPracticeMode'] == true,
       baseline: json['baseline'] != null ? _parseScan(json['baseline'], 'baseline') : null,
       scans: scansList.map((x) => _parseScan(x, x['scanId'] ?? '')).toList(),
     );
@@ -108,7 +138,7 @@ class SessionProvider extends ChangeNotifier {
     return ScanResult(
       id: id,
       label: json['label'] ?? '',
-      durationSec: (json['durationSec'] as num?)?.toDouble() ?? MockGaitService.recordDurationSec,
+      durationSec: (json['durationSec'] as num?)?.toDouble() ?? MeasurementConfig.recordingDurationSec,
       leftKnee: GaitCycleCurve(
         label: 'Gối trái',
         angles: List<double>.from((json['leftKnee'] as List? ?? []).map((x) => (x as num).toDouble())),
@@ -125,6 +155,14 @@ class SessionProvider extends ChangeNotifier {
         label: 'Cổ chân phải',
         angles: List<double>.from((json['rightAnkle'] as List? ?? []).map((x) => (x as num).toDouble())),
       ),
+      leftHip: GaitCycleCurve(
+        label: 'Hông trái',
+        angles: List<double>.from((json['leftHip'] as List? ?? []).map((x) => (x as num).toDouble())),
+      ),
+      rightHip: GaitCycleCurve(
+        label: 'Hông phải',
+        angles: List<double>.from((json['rightHip'] as List? ?? []).map((x) => (x as num).toDouble())),
+      ),
       pelvicTilt: json['pelvicTilt'] != null && (json['pelvicTilt'] as List).isNotEmpty
           ? GaitCycleCurve(
               label: 'Nghiêng hông',
@@ -136,10 +174,15 @@ class SessionProvider extends ChangeNotifier {
       actualAdjustmentDegrees: (json['actualAdjustmentDegrees'] as num?)?.toDouble() ?? 0.0,
       actualAdjustmentNotes: json['actualAdjustmentNotes'] ?? '',
       recordedAt: json['recordedAt'] != null ? DateTime.parse(json['recordedAt']) : null,
+      plantarLoadSymmetry: (json['plantarLoadSymmetry'] as num?)?.toDouble(),
+      copTrajectory: json['copTrajectory'] as List? ?? const [],
+      fatigueFlag: json['fatigueFlag'] ?? 0,
+      fatigueSlope: (json['fatigueSlope'] as num?)?.toDouble() ?? 0.0,
+      segmentId: json['segmentId'],
     );
   }
 
-  Future<void> createPatient(String name, int age, double height, double weight, LegSide healthy, ProstheticSide prosthetic) async {
+  Future<void> createPatient(String name, int age, double height, double weight, LegSide healthy, LegSide prosthetic, {String injuryHistory = '', String treatmentGoals = ''}) async {
     _isLoading = true;
     notifyListeners();
     try {
@@ -149,43 +192,94 @@ class SessionProvider extends ChangeNotifier {
         "heightCm": height,
         "weightKg": weight,
         "healthyLeg": healthy == LegSide.left ? "LEFT" : "RIGHT",
-        "prostheticLeg": prosthetic == ProstheticSide.left ? "LEFT" : "RIGHT"
+        "prostheticLeg": prosthetic == LegSide.left ? "LEFT" : "RIGHT",
+        "injuryHistory": injuryHistory,
+        "treatmentGoals": treatmentGoals
       };
       final response = await http.post(
         Uri.parse('http://localhost:8000/patients'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode(body),
-      );
+      ).timeout(const Duration(seconds: 5));
+      
       if (response.statusCode == 200) {
         final newP = _parsePatient(jsonDecode(response.body));
         _patients.add(newP);
         _activePatient = newP;
         _activeSession = null;
+      } else {
+        throw Exception("Server phản hồi mã lỗi: ${response.statusCode}");
       }
     } catch (e) {
       debugPrint('Error creating patient: $e');
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
     }
     _isLoading = false;
     notifyListeners();
   }
 
-  Future<void> startNewSession() async {
+  Future<void> updatePatientDetails(String patientId, String name, int age, double height, double weight, LegSide healthy, LegSide prosthetic, String injuryHistory, String treatmentGoals) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final body = {
+        "name": name,
+        "age": age,
+        "heightCm": height,
+        "weightKg": weight,
+        "healthyLeg": healthy == LegSide.left ? "LEFT" : "RIGHT",
+        "prostheticLeg": prosthetic == LegSide.left ? "LEFT" : "RIGHT",
+        "injuryHistory": injuryHistory,
+        "treatmentGoals": treatmentGoals
+      };
+      final response = await http.put(
+        Uri.parse('http://localhost:8000/patients/$patientId'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 5));
+      
+      if (response.statusCode == 200) {
+        await fetchPatients();
+      } else {
+        throw Exception("Server phản hồi mã lỗi: ${response.statusCode}");
+      }
+    } catch (e) {
+      debugPrint('Error updating patient: $e');
+    }
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> startNewSession({bool isPracticeMode = false}) async {
     if (_activePatient == null) return;
     _isLoading = true;
     notifyListeners();
     try {
+      final body = {
+        "isPracticeMode": isPracticeMode
+      };
       final response = await http.post(
         Uri.parse('http://localhost:8000/patients/${_activePatient!.id}/sessions'),
-      );
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(body)
+      ).timeout(const Duration(seconds: 5));
+      
       if (response.statusCode == 200) {
         final newS = _parseSession(jsonDecode(response.body));
         _activePatient!.sessions.add(newS);
         _activeSession = newS;
         _activeSession!.phase = SessionPhase.baseline; // default tab 2 mode
         _activeTabIndex = 1; // switch to Tab 2
+      } else {
+        throw Exception("Server phản hồi mã lỗi: ${response.statusCode}");
       }
     } catch (e) {
       debugPrint('Error starting session: $e');
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
     }
     _isLoading = false;
     notifyListeners();
@@ -222,7 +316,7 @@ class SessionProvider extends ChangeNotifier {
     }
 
     http.post(Uri.parse(
-      'http://localhost:8000/start_recording?session_id=${s.id}&scan_type=$scanType&duration=${MockGaitService.recordDurationSec}&healthy=$healthyStr&prosthetic=$prostheticStr'
+      'http://localhost:8000/start_recording?session_id=${s.id}&scan_type=$scanType&duration=${MeasurementConfig.recordingDurationSec}&healthy=$healthyStr&prosthetic=$prostheticStr'
     )).catchError((e) {
       debugPrint('Error starting backend recording: $e');
       return http.Response('Error', 500);
@@ -232,12 +326,7 @@ class SessionProvider extends ChangeNotifier {
     _recordTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
       s.recordingElapsedSec += 0.1;
       s.playbackSec = s.recordingElapsedSec;
-
-      if (s.recordingElapsedSec >= MockGaitService.recordDurationSec) {
-        stopRecording();
-      } else {
-        notifyListeners();
-      }
+      notifyListeners();
     });
     notifyListeners();
   }
@@ -255,6 +344,8 @@ class SessionProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Call backend stop recording to trigger save of default segment
+      await http.post(Uri.parse('http://localhost:8000/stop_recording'));
       await Future.delayed(const Duration(milliseconds: 1200));
       await fetchPatients();
       if (_activePatient != null) {
@@ -271,12 +362,12 @@ class SessionProvider extends ChangeNotifier {
 
     if (s.phase == SessionPhase.baseline) {
       s.phase = SessionPhase.scan1;
-      _activeTabIndex = 2; // Analysis tab showing baseline
+      _activeTabIndex = 3; // Analysis tab showing baseline (Tab 4 in 8-tab system)
     } else {
       s.phase = SessionPhase.analyze;
-      _activeTabIndex = 2; // Analysis tab showing results
+      _activeTabIndex = 3; // Analysis tab showing results
       if (_activeSession != null && _activeSession!.baseline != null && _activeSession!.scans.isNotEmpty) {
-        _activeSession!.recommendations = _gaitService.analyze(
+        _activeSession!.recommendations = _gaitAnalysisService.analyze(
           baseline: _activeSession!.baseline,
           scan: _activeSession!.scans.last,
           healthyLeg: _activePatient!.healthyLeg,
@@ -285,6 +376,83 @@ class SessionProvider extends ChangeNotifier {
       }
     }
 
+    notifyListeners();
+  }
+
+  Future<void> addMarker(String sessionId, {double? offset, String note = "Đánh dấu của Bác sĩ"}) async {
+    try {
+      final body = {
+        "offset": offset,
+        "note": note
+      };
+      await http.post(
+        Uri.parse('http://localhost:8000/sessions/$sessionId/markers'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(body),
+      );
+    } catch (e) {
+      debugPrint('Error creating marker: $e');
+    }
+  }
+
+  Future<void> createSegmentAndScan(String sessionId, double startSec, double endSec, String scanType, String note) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final body = {
+        "startOffsetSec": startSec,
+        "endOffsetSec": endSec,
+        "scanType": scanType,
+        "note": note
+      };
+      final response = await http.post(
+        Uri.parse('http://localhost:8000/sessions/$sessionId/segments'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(body),
+      );
+      if (response.statusCode == 200) {
+        await fetchPatients();
+        if (_activePatient != null) {
+          _activePatient = _patients.firstWhere((p) => p.id == _activePatient!.id, orElse: () => _activePatient!);
+          _activeSession = _activePatient!.sessions.firstWhere((se) => se.id == _activeSession!.id, orElse: () => _activeSession!);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error creating segment: $e');
+    }
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> createClinicalNote(String noteType, String content, {String? pinnedScanId}) async {
+    final p = _activePatient;
+    final s = _activeSession;
+    if (p == null || s == null) return;
+    
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final body = {
+        "sessionId": s.id,
+        "noteType": noteType,
+        "content": content,
+        "pinnedScanId": pinnedScanId
+      };
+      final response = await http.post(
+        Uri.parse('http://localhost:8000/patients/${p.id}/notes'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(body),
+      );
+      if (response.statusCode == 200) {
+        await fetchPatients();
+        if (_activePatient != null) {
+          _activePatient = _patients.firstWhere((p) => p.id == _activePatient!.id, orElse: () => _activePatient!);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error creating note: $e');
+    }
+    _isLoading = false;
     notifyListeners();
   }
 
@@ -327,7 +495,7 @@ class SessionProvider extends ChangeNotifier {
     if (s == null) return;
     s.phase = SessionPhase.scan2;
     s.recordingElapsedSec = 0;
-    _activeTabIndex = 1; // Tab 2: Scan
+    _activeTabIndex = 2; // Tab 3: Scan (Giao diện 8-tab)
     notifyListeners();
   }
 
@@ -342,7 +510,7 @@ class SessionProvider extends ChangeNotifier {
   String? get comparisonSummary {
     final s = _activeSession;
     if (s == null || s.scans.length < 2) return null;
-    return _gaitService.compareScans(
+    return _gaitAnalysisService.compareScans(
       s.scans.first,
       s.scans.last,
       _activePatient!.prostheticLeg,

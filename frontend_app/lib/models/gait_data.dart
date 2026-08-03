@@ -2,7 +2,6 @@ enum LegSide { left, right }
 
 enum SessionPhase { setup, baseline, scan1, analyze, adjust, scan2, report }
 
-enum ProstheticSide { left, right, unknown }
 
 class GaitCycleCurve {
   const GaitCycleCurve({
@@ -31,12 +30,19 @@ class ScanResult {
     required this.rightKnee,
     required this.leftAnkle,
     required this.rightAnkle,
+    required this.leftHip,
+    required this.rightHip,
     this.pelvicTilt,
     this.cadence,
     this.strideLength,
     this.actualAdjustmentDegrees = 0.0,
     this.actualAdjustmentNotes = '',
     this.recordedAt,
+    this.plantarLoadSymmetry,
+    this.copTrajectory = const [],
+    this.fatigueFlag = 0,
+    this.fatigueSlope = 0.0,
+    this.segmentId,
   });
 
   final String id;
@@ -46,12 +52,19 @@ class ScanResult {
   final GaitCycleCurve rightKnee;
   final GaitCycleCurve leftAnkle;
   final GaitCycleCurve rightAnkle;
+  final GaitCycleCurve leftHip;
+  final GaitCycleCurve rightHip;
   final GaitCycleCurve? pelvicTilt;
   final double? cadence;
   final double? strideLength;
   final double actualAdjustmentDegrees;
   final String actualAdjustmentNotes;
   final DateTime? recordedAt;
+  final double? plantarLoadSymmetry;
+  final List<dynamic> copTrajectory; // list of dicts/maps
+  final int fatigueFlag;
+  final double fatigueSlope;
+  final String? segmentId;
 
   ScanResult copyWith({
     String? id,
@@ -61,12 +74,19 @@ class ScanResult {
     GaitCycleCurve? rightKnee,
     GaitCycleCurve? leftAnkle,
     GaitCycleCurve? rightAnkle,
+    GaitCycleCurve? leftHip,
+    GaitCycleCurve? rightHip,
     GaitCycleCurve? pelvicTilt,
     double? cadence,
     double? strideLength,
     double? actualAdjustmentDegrees,
     String? actualAdjustmentNotes,
     DateTime? recordedAt,
+    double? plantarLoadSymmetry,
+    List<dynamic>? copTrajectory,
+    int? fatigueFlag,
+    double? fatigueSlope,
+    String? segmentId,
   }) {
     return ScanResult(
       id: id ?? this.id,
@@ -76,12 +96,19 @@ class ScanResult {
       rightKnee: rightKnee ?? this.rightKnee,
       leftAnkle: leftAnkle ?? this.leftAnkle,
       rightAnkle: rightAnkle ?? this.rightAnkle,
+      leftHip: leftHip ?? this.leftHip,
+      rightHip: rightHip ?? this.rightHip,
       pelvicTilt: pelvicTilt ?? this.pelvicTilt,
       cadence: cadence ?? this.cadence,
       strideLength: strideLength ?? this.strideLength,
       actualAdjustmentDegrees: actualAdjustmentDegrees ?? this.actualAdjustmentDegrees,
       actualAdjustmentNotes: actualAdjustmentNotes ?? this.actualAdjustmentNotes,
       recordedAt: recordedAt ?? this.recordedAt,
+      plantarLoadSymmetry: plantarLoadSymmetry ?? this.plantarLoadSymmetry,
+      copTrajectory: copTrajectory ?? this.copTrajectory,
+      fatigueFlag: fatigueFlag ?? this.fatigueFlag,
+      fatigueSlope: fatigueSlope ?? this.fatigueSlope,
+      segmentId: segmentId ?? this.segmentId,
     );
   }
 }
@@ -104,6 +131,26 @@ class AdjustmentRecommendation {
 
 enum RecommendationSeverity { info, warning, critical }
 
+class ClinicalNote {
+  const ClinicalNote({
+    required this.id,
+    required this.patientId,
+    required this.sessionId,
+    this.pinnedScanId,
+    required this.noteType,
+    required this.content,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String patientId;
+  final String sessionId;
+  final String? pinnedScanId;
+  final String noteType; // 'history' or 'symptom'
+  final String content;
+  final DateTime createdAt;
+}
+
 class GaitSession {
   GaitSession({
     this.id = '',
@@ -115,6 +162,7 @@ class GaitSession {
     this.isRecording = false,
     this.recordingElapsedSec = 0,
     this.playbackSec = 0,
+    this.isPracticeMode = false,
   })  : createdAt = createdAt ?? DateTime.now(),
         scans = scans ?? [];
 
@@ -127,6 +175,7 @@ class GaitSession {
   bool isRecording;
   double recordingElapsedSec;
   double playbackSec;
+  bool isPracticeMode;
 
   // Backward compatibility getters
   ScanResult? get scan1 => scans.isNotEmpty ? scans.first : null;
@@ -158,6 +207,7 @@ class GaitSession {
     bool? isRecording,
     double? recordingElapsedSec,
     double? playbackSec,
+    bool? isPracticeMode,
   }) {
     return GaitSession(
       id: id ?? this.id,
@@ -169,6 +219,7 @@ class GaitSession {
       isRecording: isRecording ?? this.isRecording,
       recordingElapsedSec: recordingElapsedSec ?? this.recordingElapsedSec,
       playbackSec: playbackSec ?? this.playbackSec,
+      isPracticeMode: isPracticeMode ?? this.isPracticeMode,
     );
   }
 }
@@ -182,6 +233,9 @@ class Patient {
     required this.weightKg,
     required this.healthyLeg,
     required this.prostheticLeg,
+    this.injuryHistory = '',
+    this.treatmentGoals = '',
+    this.clinicalNotes = const [],
     List<GaitSession>? sessions,
   }) : sessions = sessions ?? [];
 
@@ -191,7 +245,10 @@ class Patient {
   final double heightCm;
   final double weightKg;
   final LegSide healthyLeg;
-  final ProstheticSide prostheticLeg;
+  final LegSide prostheticLeg;
+  final String injuryHistory;
+  final String treatmentGoals;
+  final List<ClinicalNote> clinicalNotes;
   final List<GaitSession> sessions;
 
   Patient copyWith({
@@ -201,7 +258,10 @@ class Patient {
     double? heightCm,
     double? weightKg,
     LegSide? healthyLeg,
-    ProstheticSide? prostheticLeg,
+    LegSide? prostheticLeg,
+    String? injuryHistory,
+    String? treatmentGoals,
+    List<ClinicalNote>? clinicalNotes,
     List<GaitSession>? sessions,
   }) {
     return Patient(
@@ -212,6 +272,9 @@ class Patient {
       weightKg: weightKg ?? this.weightKg,
       healthyLeg: healthyLeg ?? this.healthyLeg,
       prostheticLeg: prostheticLeg ?? this.prostheticLeg,
+      injuryHistory: injuryHistory ?? this.injuryHistory,
+      treatmentGoals: treatmentGoals ?? this.treatmentGoals,
+      clinicalNotes: clinicalNotes ?? this.clinicalNotes,
       sessions: sessions ?? this.sessions,
     );
   }

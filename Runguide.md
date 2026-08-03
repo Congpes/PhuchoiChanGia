@@ -8,6 +8,10 @@ Tài liệu này hướng dẫn cách chạy song song Python Backend (MediaPipe
 
 Backend chịu trách nhiệm mở Webcam, nhận dạng khung xương bằng AI (MediaPipe), tính toán góc khớp thời gian thực và cung cấp dữ liệu qua API.
 
+Cách nhanh nhất là nhấp đúp chuột vào tệp **`chay_backend.bat`** ở thư mục gốc của dự án. Tệp này sẽ tự động kích hoạt môi trường ảo và khởi chạy server.
+
+Hoặc bạn có thể khởi chạy thủ công bằng dòng lệnh:
+
 1. Mở Terminal mới tại thư mục dự án.
 2. Di chuyển vào thư mục `backend`:
    ```powershell

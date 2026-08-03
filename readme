@@ -1,72 +1,53 @@
-
-
-> **"Hệ thống Phân tích Dáng đi Không xâm lấn (Markerless Gait Analysis) hỗ trợ Đánh giá và Phục hồi Chân năng cho Người sử dụng Chân giả dựa trên Trí tuệ Nhân tạo."**
-
-### 2. Tên thương mại / Viết tắt (Dùng để gọi nhanh trong nhóm):
-
-> **AI-ProGait** *(AI Prosthetic Gait Analysis System)*
-
----
-
-## I. TÓM TẮT CỐT LÕI (EXECUTIVE SUMMARY)
-
-**AI-ProGait** là một giải pháp phần mềm y sinh thay thế cho các hệ thống phòng Lab cảm biến quang học đắt đỏ (tốn hàng tỷ đồng như Vicon).
-
-Thay vì phải dán các bóng phản quang lên người bệnh nhân, hệ thống sử dụng **Camera/Webcam thông thường kết hợp với AI Thị giác máy tính (MediaPipe Pose Heavy Model)** để bám sát khung xương 2D theo thời gian thực.
-
-🎯 **Đột phá cốt lõi của giải pháp:** Sử dụng chính **"Chân Lành" (Healthy Leg)** của bệnh nhân làm **Thước đo Tiêu chuẩn Vàng (Personalized Baseline)** để thẩm định độ đồng bộ, hỗ trợ bác sĩ chỉnh hình cân chỉnh khớp cơ khí, và cung cấp phản hồi sinh học (Biofeedback) giúp bệnh nhân tập đi đều bước.
-
----
-
-## II. VẤN ĐỀ THỰC TẾ & GIẢI PHÁP CỦA NHÓM
-
-| Vấn đề hiện tại ở các Xưởng Chỉnh Hình / Bệnh viện | Giải pháp đột phá của AI-ProGait |
-| --- | --- |
-| **Bác sĩ cân chỉnh theo cảm tính:** Thợ chỉnh hình điều chỉnh phuộc thủy lực/lò xo gối chân giả chỉ bằng cách nhìn mắt thường xem bệnh nhân đi có khập khiễng hay không. | **Số hóa & Định lượng chuẩn xác:** AI đo exacly góc gập gối (ví dụ: Chân lành co $62^\circ$, Chân giả chỉ co $40^\circ \rightarrow$ Bác sĩ biết cần nới lỏng khớp ra chính xác bao nhiêu). |
-| **Bệnh nhân tập đi bị sai dáng:** Người mất chân sợ ngã nên hay có tật nhón chân, quăng hông sang bên (Hip Circumduction), vẹo cột sống lâu ngày gây liệt. | **Gương phản hồi sinh học (Biofeedback):** Hiển thị trực tiếp đồ thị 2 chân song song trên màn hình lớn khi đi trên máy tập để bệnh nhân tự điều chỉnh lực bước đi. |
-| **Thiếu dữ liệu cá nhân hóa:** Chiều cao và sải chân mỗi người khác nhau, không thể áp dụng một con số góc gối "chuẩn chung" cho tất cả. | **Thu thập thông số mẫu (Baseline Scan):** Quét chân lành trong 10 giây để tạo ra đường cong nhịp điệu sinh học riêng biệt cho từng cá nhân. |
-
----
-
-## III. THIẾT LẬP PHẦN CỨNG (MÔ HÌNH 2 CAMERA CHUẨN LAB)
-
-Để khắc phục nhược điểm AI bị che khuất điểm khớp (Self-Occlusion), hệ thống bố trí 2 camera chuyên biệt:
-
-* 🎥 **Camera 1 (Chính diện - Frontal Plane):** Đặt phía trước, hướng trực diện vào bệnh nhân.
-* *Nhiệm vụ:* Đo **độ đối xứng toàn thân**, phát hiện dáng đi lệch trục, vẹo vai, nghiêng xương chậu.
-
-
-* 🎥 **Camera 2 (Góc nghiêng $90^\circ$ - Sagittal Plane):** Đặt ngang bên cạnh (ưu tiên đặt cùng phía với chiếc chân cần phân tích).
-* *Nhiệm vụ:* Đo **góc động học khớp xương** (Hông - Gối - Cổ chân) và trích xuất chu kỳ bước đi (nhấc chân, gót chạm đất).
-
-
-
----
-
-## IV. QUY TRÌNH HOẠT ĐỘNG 3 BƯỚC (CLINICAL WORKFLOW)
-
-```
-[BƯỚC 1: QUÉT CHÂN LÀNH 10s] ➔ [BƯỚC 2: QUÉT CHÂN GIẢ] ➔ [BƯỚC 3: SO SÁNH & XUẤT BÁO CÁO]
- (Tạo đường cong chuẩn Baseline)   (Đo góc gập thực tế Realtime)   (Tính độ lệch sai số cho Bác sĩ)
-
-```
-
-1. **Bước 1: Thu thập Chuẩn cá nhân (Baseline Calibration - 10 giây)**
-* Bệnh nhân bước đi tự nhiên trên thảm hoặc máy chạy bộ.
-* Kỹ thuật viên chọn chế độ "Quét Chân Lành". AI thu thập mảng góc gối liên tục trong 10 giây (khoảng 4 - 6 chu kỳ bước đi).
-* Hệ thống tự động lọc ra: **Góc gập tối đa (Max Co)**, **Góc duỗi tối đa (Min Duỗi)** và vẽ nên **Đường cong chuẩn lý thuyết**.
-
-
-2. **Bước 2: Phân tích Chân Giả (Prosthetic Evaluation)**
-* Bệnh nhân đeo chân giả vào bước đi.
-* AI ghi nhận đường cong dao động góc khớp gối của chân giả theo thời gian thực.
-
-
-3. **Bước 3: Chồng chập Đồ thị & Đánh giá (Comparative Analysis)**
-* Hệ thống đặt 2 đường cong (Chân Lành vs Chân Giả) lên cùng một biểu đồ.
-* Tính toán độ lệch (Error Margin) và hiển thị cảnh báo: *"Chân giả đang đi trễ nhịp 0.2 giây"* hoặc *"Biên độ gập gối đang thiếu $15^\circ$"*.
-
-
-
----
-
+Công thức tính quy trình
+1. Tính góc khớp bằng vector + atan2
+Muốn tính góc gập gối, hệ thống có 3 điểm tọa độ (x,y) từ MediaPipe: 
+hông, gối, mắt cá. Từ đó dựng 2 vector: vector từ gối→hông và vector 
+từ gối→mắt cá. Góc giữa 2 vector này chính là góc gập gối thực tế.
+Tại sao dùng atan2 thay vì công thức cos thông thường 
+(tích vô hướng / độ dài)? Vì công thức cos chỉ cho ra góc từ 0°–180° 
+nhưng mất dấu (không phân biệt được gập về phía trước hay phía sau), 
+còn atan2(y,x) giữ được cả độ lớn lẫn chiều, tính toán ổn định hơn 
+khi góc gần 0° hoặc 180° (công thức cos dễ lỗi số học ở các điểm 
+biên này do đạo hàm của arccos tiến ra vô cực).
+2. Nội suy chuẩn hóa 101 điểm (Resampling)
+Vấn đề: mỗi lần đi bộ, số khung hình quay được sẽ khác nhau 
+(đi nhanh quay được ít khung hơn đi chậm). Nếu vẽ thẳng dữ liệu 
+thô, biểu đồ giữa 2 lần đo sẽ lệch trục hoành, không so sánh được.
+Giải pháp: dùng nội suy tuyến tính để "kéo giãn/co lại" bất kỳ 
+chuỗi dữ liệu nào về đúng 101 điểm — quy ước 0% đến 100% của một chu 
+kỳ bước đi (chuẩn ngành phân tích dáng đi, tương tự phần mềm CONTEMPLAS 
+bạn từng gửi tham khảo). Nhờ vậy, dù đoạn ghi hình có 250 khung hay 400 khung,
+ kết quả sau khi resample đều nằm trên cùng 1 trục 0–100%, chồng đè 
+lên nhau để so sánh trực tiếp pha nào bị lệch.
+3. Phát hiện đỉnh (Peak Detection) tính Cadence
+Mỗi lần chân lành bước, góc gối sẽ tăng vọt lên một đỉnh 
+(khi nhấc chân lên) rồi hạ xuống. Đếm số đỉnh vượt ngưỡng 45° tương đương 
+đếm số bước đi thực tế của chân đó. Vì 1 "bước" của cadence tính cả 2 chân 
+(trái+phải luân phiên) nên nhân đôi số đỉnh đo được từ 1 chân. Quy đổi ra 
+bước/phút bằng cách chia cho thời gian đoạn ghi rồi nhân 60. Ngưỡng 45° không phải 
+số ngẫu nhiên — nó đủ cao để lọc bỏ rung lắc nhỏ (noise) nhưng đủ thấp để không 
+bỏ sót bước đi thật của người có ROM hạn chế.
+4. Rule-based Decision (delta > 8°)
+Đây là luật lâm sàng đơn giản hóa từ kinh nghiệm kỹ thuật viên: nếu chân giả 
+gập ít hơn chân lành từ 8° trở lên, sự khác biệt đó đủ lớn để ảnh hưởng dáng 
+đi (gây vấp, mất đối xứng rõ rệt), nên đáng để đề xuất chỉnh. Ngưỡng 8° đóng 
+vai trò như một "vùng đệm" (deadband) — tránh hệ thống cứ chênh lệch 1-2° 
+(vốn có thể chỉ do sai số đo đạc/rung camera) là đã báo cần chỉnh, gây nhiễu 
+quyết định của bác sĩ.
+5. AI Auto-flag (mới)
+Khác với thuật toán #4 (so sánh sau khi đo xong), cái này chạy realtime trong 
+lúc đang quay. Ý tưởng: một sự thay đổi đột ngột trong thời gian ngắn 
+(>10% chênh lệch trong <2 giây) thường là dấu hiệu bất thường tức thời 
+(ví dụ bệnh nhân trượt chân, mất thăng bằng) — khác với sai lệch ổn định do 
+chân giả lắp sai. Việc đặt ngưỡng theo tốc độ thay đổi (không phải giá trị tuyệt đối) 
+giúp phân biệt được "lệch từ từ do chân giả" và "lệch đột ngột do sự cố", để chỉ gắn 
+cờ đúng loại sự kiện cần bác sĩ xem lại.
+6. Fatigue Decay Estimation (mới)
+Dùng hồi quy tuyến tính đơn giản (fit một đường thẳng) trên cadence/sải chân 
+theo cửa sổ trượt (rolling window) suốt buổi tập. Nếu độ dốc (slope) của đường 
+hồi quy là âm và vượt một ngưỡng nhất định, nghĩa là cadence đang giảm dần một 
+cách có hệ thống — không phải dao động ngẫu nhiên — nên kết luận là bệnh nhân đang
+ mệt. Lý do quan trọng của thuật toán này: nếu bác sĩ đo ROM ở cuối buổi tập lúc bệnh
+  nhân đã mệt, dữ liệu đó phản ánh sự mệt mỏi chứ không phản ánh đúng chất lượng lắp 
+  chân giả — nếu không tách bạch, dễ dẫn tới chỉnh sai (chỉnh chân giả để bù cho triệu 
+  chứng mệt mỏi tạm thời, chứ không phải lỗi cơ khí thật).

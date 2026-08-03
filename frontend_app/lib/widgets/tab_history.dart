@@ -16,21 +16,21 @@ class TabHistory extends StatefulWidget {
 class _TabHistoryState extends State<TabHistory> {
   GaitSession? _selectedSession;
 
-  double _getROM(ScanResult? scan, ProstheticSide side) {
+  double _getROM(ScanResult? scan, LegSide side) {
     if (scan == null) return 0.0;
-    final curve = side == ProstheticSide.left ? scan.leftKnee : scan.rightKnee;
+    final curve = side == LegSide.left ? scan.leftKnee : scan.rightKnee;
     return curve.maxAngle - curve.minAngle;
   }
 
-  double _getPeakFlexion(ScanResult? scan, ProstheticSide side) {
+  double _getPeakFlexion(ScanResult? scan, LegSide side) {
     if (scan == null) return 0.0;
-    final curve = side == ProstheticSide.left ? scan.leftKnee : scan.rightKnee;
+    final curve = side == LegSide.left ? scan.leftKnee : scan.rightKnee;
     return curve.maxAngle;
   }
 
-  double _getPeakExtension(ScanResult? scan, ProstheticSide side) {
+  double _getPeakExtension(ScanResult? scan, LegSide side) {
     if (scan == null) return 0.0;
-    final curve = side == ProstheticSide.left ? scan.leftKnee : scan.rightKnee;
+    final curve = side == LegSide.left ? scan.leftKnee : scan.rightKnee;
     return curve.minAngle;
   }
 
@@ -81,7 +81,7 @@ class _TabHistoryState extends State<TabHistory> {
                   Text('BỆNH NHÂN: ${patient.name}', style: const TextStyle(fontWeight: FontWeight.bold)),
                   Text('Tuổi: ${patient.age} | Chiều cao: ${patient.heightCm}cm | Cân nặng: ${patient.weightKg}kg'),
                   Text('Chân lành sinh học: ${patient.healthyLeg == LegSide.left ? 'Trái' : 'Phải'}'),
-                  Text('Chân giả lắp đặt: ${side == ProstheticSide.left ? 'Trái' : 'Phải'}'),
+                  Text('Chân giả lắp đặt: ${side == LegSide.left ? 'Trái' : 'Phải'}'),
                   const SizedBox(height: 12),
                   Text('Phiên kiểm định: ${session.id} (Tạo ngày: ${session.createdAt.toLocal().toString().substring(0, 16)})'),
                   const SizedBox(height: 16),
@@ -104,7 +104,7 @@ class _TabHistoryState extends State<TabHistory> {
                       TableRow(
                         children: [
                           const Padding(padding: EdgeInsets.all(8), child: Text('ROM Gập duỗi gối', style: TextStyle(fontSize: 11))),
-                          Padding(padding: EdgeInsets.all(8), child: Text('${_getROM(session.baseline, side == ProstheticSide.left ? ProstheticSide.right : ProstheticSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
+                          Padding(padding: EdgeInsets.all(8), child: Text('${_getROM(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getROM(scan1, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getROM(scan2, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11, color: AppColors.accentGreen, fontWeight: FontWeight.bold))),
                         ],
@@ -112,7 +112,7 @@ class _TabHistoryState extends State<TabHistory> {
                       TableRow(
                         children: [
                           const Padding(padding: EdgeInsets.all(8), child: Text('Góc gập lớn nhất (Flexion)', style: TextStyle(fontSize: 11))),
-                          Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakFlexion(session.baseline, side == ProstheticSide.left ? ProstheticSide.right : ProstheticSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
+                          Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakFlexion(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakFlexion(scan1, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakFlexion(scan2, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11, color: AppColors.accentGreen, fontWeight: FontWeight.bold))),
                         ],
@@ -120,7 +120,7 @@ class _TabHistoryState extends State<TabHistory> {
                       TableRow(
                         children: [
                           const Padding(padding: EdgeInsets.all(8), child: Text('Góc duỗi thẳng nhất (Extension)', style: TextStyle(fontSize: 11))),
-                          Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakExtension(session.baseline, side == ProstheticSide.left ? ProstheticSide.right : ProstheticSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
+                          Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakExtension(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakExtension(scan1, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11))),
                           Padding(padding: EdgeInsets.all(8), child: Text('${_getPeakExtension(scan2, side).toStringAsFixed(0)}°', style: const TextStyle(fontSize: 11, color: AppColors.accentGreen, fontWeight: FontWeight.bold))),
                         ],
@@ -173,7 +173,7 @@ class _TabHistoryState extends State<TabHistory> {
                         Expanded(
                           child: Text(
                             scan2 != null
-                                ? 'Phân tích: Biên độ vận động gập gối (ROM) chân giả sau chỉnh sửa đã tăng rõ rệt từ ${_getROM(scan1, side).toStringAsFixed(0)}° lên ${_getROM(scan2, side).toStringAsFixed(0)}° (tiệm cận mức chân lành ${_getROM(session.baseline, side == ProstheticSide.left ? ProstheticSide.right : ProstheticSide.left).toStringAsFixed(0)}°). Dao động pelvic sway giảm tương ứng từ ${_getPelvicSway(scan1).toStringAsFixed(1)}° xuống ${_getPelvicSway(scan2).toStringAsFixed(1)}°, cho thấy bệnh nhân giảm thiểu dáng đi khập khiễng lệch hông rõ rệt.'
+                                ? 'Phân tích: Biên độ vận động gập gối (ROM) chân giả sau chỉnh sửa đã tăng rõ rệt từ ${_getROM(scan1, side).toStringAsFixed(0)}° lên ${_getROM(scan2, side).toStringAsFixed(0)}° (tiệm cận mức chân lành ${_getROM(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°). Dao động pelvic sway giảm tương ứng từ ${_getPelvicSway(scan1).toStringAsFixed(1)}° xuống ${_getPelvicSway(scan2).toStringAsFixed(1)}°, cho thấy bệnh nhân giảm thiểu dáng đi khập khiễng lệch hông rõ rệt.'
                                 : 'Đã ghi nhận dữ liệu lâm sàng thành công. Cần thực hiện scan lần 2 sau khi vặn cơ khí để hiển thị báo cáo đối chiếu đầy đủ.',
                             style: const TextStyle(fontSize: 11, color: Colors.white, height: 1.4),
                           ),
@@ -216,10 +216,36 @@ class _TabHistoryState extends State<TabHistory> {
     final patient = provider.activePatient;
 
     if (patient == null) {
-      return const Center(
-        child: Text(
-          'Vui lòng chọn bệnh nhân ở Tab Bệnh nhân để xem lịch sử khám.',
-          style: TextStyle(color: AppColors.textSecondary),
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.person_search_outlined, size: 64, color: AppColors.textSecondary),
+            const SizedBox(height: 16),
+            const Text(
+              'Chưa chọn bệnh nhân',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Vui lòng chọn bệnh nhân ở Tab Bệnh nhân để xem lịch sử khám.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => provider.setTabIndex(0),
+              icon: const Icon(Icons.people_outline, color: Colors.black),
+              label: const Text(
+                'QUAY LẠI HỒ SƠ BỆNH NHÂN',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -260,7 +286,7 @@ class _TabHistoryState extends State<TabHistory> {
     String jointTitle = 'Khớp gối chân giả (Knee Angle)';
     final side = patient.prostheticLeg;
 
-    if (side == ProstheticSide.left) {
+    if (side == LegSide.left) {
       curveBefore = scan1?.leftKnee;
       curveAfter = scan2?.leftKnee;
       jointTitle = 'Gập duỗi khớp gối trái (Trái - L)';
@@ -541,9 +567,18 @@ class _TabHistoryState extends State<TabHistory> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: () => provider.setTabIndex(2), // jump to Tab 3
-                                child: const Text('Đến Tab Phân Tích'),
+                              FilledButton.icon(
+                                onPressed: () => provider.setTabIndex(3),
+                                icon: const Icon(Icons.analytics_outlined, color: Colors.black),
+                                label: const Text(
+                                  'ĐẾN TAB PHÂN TÍCH',
+                                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppColors.accent,
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
                               ),
                             ],
                           ),
