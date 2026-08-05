@@ -26,9 +26,9 @@ from algorithms import (
 
 app = FastAPI()
 
-# Default to the laptop's single camera. When the second camera is installed,
-# set SINGLE_CAMERA_MODE=false and configure the two indexes in the environment.
-SINGLE_CAMERA_MODE = os.getenv("SINGLE_CAMERA_MODE", "true").lower() in ("1", "true", "yes")
+# The deployed setup uses the laptop camera and one USB camera simultaneously.
+# Environment variables still allow falling back to one camera or swapping indexes.
+SINGLE_CAMERA_MODE = os.getenv("SINGLE_CAMERA_MODE", "false").lower() in ("1", "true", "yes")
 CAMERA_FRONTAL_INDEX = int(os.getenv("CAMERA_FRONTAL_INDEX", "0"))
 CAMERA_SAGITTAL_INDEX = int(os.getenv("CAMERA_SAGITTAL_INDEX", "1"))
 CAMERA_BACKEND = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
@@ -71,17 +71,20 @@ recorded_left_hip = []
 recorded_right_hip = []
 session_markers = []
 
-# MediaPipe Pose Setup
+# MediaPipe Pose Setup. Each capture thread creates its own Pose instance because
+# a single MediaPipe graph must not be processed concurrently by two threads.
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
-pose = mp_pose.Pose(
-    static_image_mode=False,
-    model_complexity=1,
-    smooth_landmarks=True,
-    enable_segmentation=False,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+
+def create_pose_detector():
+    return mp_pose.Pose(
+        static_image_mode=False,
+        model_complexity=1,
+        smooth_landmarks=True,
+        enable_segmentation=False,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
 
 def draw_overlay_text(frame, text, pos, color=(255, 255, 255), scale=0.7, thickness=2):
     cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
@@ -90,6 +93,7 @@ def draw_overlay_text(frame, text, pos, color=(255, 255, 255), scale=0.7, thickn
 def camera_loop_0():
     """Camera index 0: Frontal view"""
     global latest_frame_0, running
+    pose = create_pose_detector()
     cap = cv2.VideoCapture(CAMERA_FRONTAL_INDEX, CAMERA_BACKEND)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -118,6 +122,7 @@ def camera_loop_0():
         time.sleep(0.03)
         
     cap.release()
+    pose.close()
     print("[Camera 0] thread stopped.")
 
 def camera_loop_1():
@@ -126,6 +131,7 @@ def camera_loop_1():
     global recorded_timestamps, recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle
     global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt
     
+    pose = create_pose_detector()
     camera_index = CAMERA_FRONTAL_INDEX if SINGLE_CAMERA_MODE else CAMERA_SAGITTAL_INDEX
     cap = cv2.VideoCapture(camera_index, CAMERA_BACKEND)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -218,6 +224,7 @@ def camera_loop_1():
         time.sleep(0.03)
         
     cap.release()
+    pose.close()
     print("[Camera 1] thread stopped.")
 
 # Do not open the same Windows camera from two threads in single-camera mode.
