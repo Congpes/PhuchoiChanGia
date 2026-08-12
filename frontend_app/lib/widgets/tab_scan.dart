@@ -1,10 +1,16 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'dart:math';
+import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
+
+import '../models/analysis_segment.dart';
 import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import 'realtime_chart_workspace.dart';
+import 'recording_timeline.dart';
 import 'video_stream.dart';
 
 class TabScan extends StatefulWidget {
@@ -15,35 +21,145 @@ class TabScan extends StatefulWidget {
 }
 
 class _TabScanState extends State<TabScan> {
-  double _sliceStart = 0.0;
-  double _sliceEnd = 15.0;
-  double _totalDuration = 15.0;
-  String _scanType = 'scan_1';
-  final TextEditingController _noteController = TextEditingController(text: 'Phân tích dáng đi');
-  final List<Map<String, dynamic>> _localMarkers = [];
+  bool _sidebarOpen = false;
+  bool _chartsExpanded = true;
+  bool? _camera0Connected;
+  bool? _camera1Connected;
+  Timer? _cameraTimer;
+  double? _pendingStart;
+  final List<AnalysisSegment> _segments = [];
+  final Set<RealtimeChartType> _selectedCharts = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _pollCameraStatus();
+    _cameraTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _pollCameraStatus(),
+    );
+  }
 
   @override
   void dispose() {
-    _noteController.dispose();
+    _cameraTimer?.cancel();
     super.dispose();
   }
 
-  void _addMarker(SessionProvider provider, GaitSession session) {
-    final offset = session.recordingElapsedSec;
-    final markerNote = 'Bất thường lúc ${offset.toStringAsFixed(1)}s';
-    provider.addMarker(session.id, offset: offset, note: markerNote);
-    setState(() {
-      _localMarkers.add({
-        'offset': offset,
-        'note': markerNote,
+  Future<void> _pollCameraStatus() async {
+    try {
+      final response = await http
+          .get(Uri.parse('http://127.0.0.1:8000/camera-status'))
+          .timeout(const Duration(milliseconds: 900));
+      if (response.statusCode != 200 || !mounted) return;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() {
+        _camera0Connected = body['camera0']?['connected'] == true;
+        _camera1Connected = body['camera1']?['connected'] == true;
       });
-    });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _camera0Connected = false;
+          _camera1Connected = false;
+        });
+      }
+    }
+  }
+
+  void _message(String text, {bool error = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Đã ghim bất thường: $markerNote'),
-        backgroundColor: AppColors.warning,
-        duration: const Duration(seconds: 2),
+        content: Text(text),
+        backgroundColor: error ? AppColors.critical : AppColors.accent,
+        behavior: SnackBarBehavior.floating,
       ),
+    );
+  }
+
+  String _clock(double seconds) {
+    final total = seconds.floor();
+    final hours = (total ~/ 3600).toString().padLeft(2, '0');
+    final minutes = ((total % 3600) ~/ 60).toString().padLeft(2, '0');
+    final secs = (total % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$secs';
+  }
+
+  Future<void> _startRecording(SessionProvider provider) async {
+    final error = await provider.startContinuousRecording();
+    if (error != null) {
+      _message(error, error: true);
+      return;
+    }
+    setState(() {
+      _pendingStart = null;
+      _segments.clear();
+    });
+  }
+
+  Future<void> _stopRecording(SessionProvider provider) async {
+    final hadPendingMarker = _pendingStart != null;
+    final error = await provider.stopContinuousRecording();
+    if (error != null) {
+      _message(error, error: true);
+      return;
+    }
+    setState(() => _pendingStart = null);
+    _message(
+      hadPendingMarker
+          ? 'Phi\u00ean ghi \u0111\u00e3 d\u1eebng. M\u1ed1c \u0111\u1ea7u cu\u1ed1i c\u00f9ng ch\u01b0a c\u00f3 m\u1ed1c cu\u1ed1i n\u00ean kh\u00f4ng \u0111\u01b0\u1ee3c l\u01b0u.'
+          : '\u0110\u00e3 d\u1eebng v\u00e0 l\u01b0u video g\u1ed1c c\u1ee7a phi\u00ean \u0111o.',
+    );
+  }
+
+  Future<void> _toggleMarker(
+    SessionProvider provider,
+    GaitSession session,
+  ) async {
+    final now = session.recordingElapsedSec;
+    if (_pendingStart == null) {
+      await provider.addMarker(
+        session.id,
+        offset: now,
+        note: 'M\u1ed1c \u0111\u1ea7u \u0111o\u1ea1n ${_segments.length + 1}',
+      );
+      setState(() => _pendingStart = now);
+      _message(
+        '\u0110\u00e3 \u0111\u1eb7t m\u1ed1c \u0111\u1ea7u t\u1ea1i ${now.toStringAsFixed(1)} gi\u00e2y.',
+      );
+      return;
+    }
+
+    final start = _pendingStart!;
+    if (now - start < 0.5) {
+      _message(
+        '\u0110o\u1ea1n ph\u00e2n t\u00edch ph\u1ea3i d\u00e0i \u00edt nh\u1ea5t 0,5 gi\u00e2y.',
+        error: true,
+      );
+      return;
+    }
+
+    final label = '\u0110o\u1ea1n ph\u00e2n t\u00edch ${_segments.length + 1}';
+    final error = await provider.createVirtualSegment(start, now, label);
+    if (error != null) {
+      _message(error, error: true);
+      return;
+    }
+    await provider.addMarker(
+      session.id,
+      offset: now,
+      note: 'M\u1ed1c cu\u1ed1i $label',
+    );
+    setState(() {
+      _segments.add(
+        AnalysisSegment(start: start, end: now, label: label),
+      );
+      _pendingStart = null;
+    });
+    _message(
+      '\u0110\u00e3 l\u01b0u $label '
+      '(${start.toStringAsFixed(1)}\u2013${now.toStringAsFixed(1)} gi\u00e2y).',
     );
   }
 
@@ -54,528 +170,613 @@ class _TabScanState extends State<TabScan> {
     final session = provider.activeSession;
 
     if (patient == null || session == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.person_search_outlined, size: 64, color: AppColors.textSecondary),
-            const SizedBox(height: 16),
-            const Text(
-              'Chưa chọn bệnh nhân hoặc phiên khám',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Vui lòng bắt đầu phiên khám mới hoặc chọn bệnh nhân ở Tab Bệnh nhân.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => provider.setTabIndex(0),
-              icon: const Icon(Icons.people_outline, color: Colors.black),
-              label: const Text(
-                'QUAY LẠI HỒ SƠ BỆNH NHÂN',
-                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ],
-        ),
-      );
+      return _empty(provider);
     }
 
-    final isRecording = session.isRecording;
-    if (isRecording) {
-      if (session.recordingElapsedSec > _totalDuration) {
-        _totalDuration = session.recordingElapsedSec;
-      }
-    } else {
-      if (session.recordingElapsedSec > 0.0) {
-        _totalDuration = session.recordingElapsedSec;
-      }
-    }
-
-    return Container(
+    return ColoredBox(
       color: AppColors.background,
       child: Column(
         children: [
-          // Header Status Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: const BoxDecoration(
-              color: AppColors.panel,
-              border: Border(bottom: BorderSide(color: AppColors.border)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: AppColors.accent, size: 20),
-                      onPressed: () => provider.setTabIndex(1),
-                      tooltip: 'Quay lại Bước chuẩn bị',
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: isRecording ? AppColors.critical : AppColors.accent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      isRecording ? 'Đang ghi hình dáng đi liên tục...' : 'Đã ghi hình dáng đi - Chờ cắt phân đoạn',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                  ],
-                ),
-                Text(
-                  'Bệnh nhân: ${patient.name} (ID: ${patient.id})',
-                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-          ),
-
-          // Central Panels: Live Frontal & Sagittal Streams on left, FSR Heatmap on right
+          _statusBar(provider, session),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: Stack(
               children: [
-                // Cameras on the Left
-                Expanded(
-                  flex: 3,
-                  child: Row(
+                Positioned.fill(
+                  child: Column(
                     children: [
+                      _workspaceToolbar(),
                       Expanded(
-                        child: _buildCameraPreview(
-                          title: 'CAM 1 — CHÍNH DIỆN (FRONTAL)',
-                          streamUrl: 'http://localhost:8000/video_feed_0',
-                          isRecording: isRecording,
-                          elapsed: session.recordingElapsedSec,
-                        ),
+                        flex: 5,
+                        child: _cameraWorkspace(session),
                       ),
                       Expanded(
-                        child: _buildCameraPreview(
-                          title: 'CAM 2 — TRỤC NGANG (SAGITTAL 90°)',
-                          streamUrl: 'http://localhost:8000/video_feed_1',
-                          isRecording: isRecording,
-                          elapsed: session.recordingElapsedSec,
-                        ),
+                        flex: 5,
+                        child: _chartWorkspace(),
+                      ),
+                      RecordingTimeline(
+                        duration: session.recordingElapsedSec,
+                        segments: _segments,
+                        pendingStart: _pendingStart,
                       ),
                     ],
                   ),
                 ),
-                // FSR Heatmap on the Right (Placeholder waiting for real hardware)
-                const Expanded(
-                  flex: 1,
-                  child: InsoleHeatmapWidget(),
-                ),
+                if (_sidebarOpen)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _sidebarOpen = false),
+                      child: Container(
+                        color: AppColors.textPrimary.withValues(alpha: 0.08),
+                      ),
+                    ),
+                  ),
+                _sidebar(patient, session),
               ],
             ),
-          ),
-
-          // Bottom Control Panel: Record & Crop segment tools
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            decoration: const BoxDecoration(
-              color: AppColors.sidebar,
-              border: Border(top: BorderSide(color: AppColors.border)),
-            ),
-            child: isRecording
-                ? Row(
-                    children: [
-                      const Icon(Icons.radio_button_checked, color: AppColors.critical, size: 24),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Đang ghi nhận dữ liệu 2 Camera... (${session.recordingElapsedSec.toStringAsFixed(1)}s). Bác sĩ có thể bấm nút ghim mốc bất thường.',
-                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                        ),
-                      ),
-                      // Flag Marker button
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange[800],
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        ),
-                        onPressed: () => _addMarker(provider, session),
-                        icon: const Icon(Icons.flag, color: Colors.white),
-                        label: const Text('GHIM BẤT THƯỜNG', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                      const SizedBox(width: 16),
-                      // Stop recording button
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.critical,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                        ),
-                        onPressed: () async {
-                          await provider.stopRecording();
-                          setState(() {
-                            _sliceStart = 0.0;
-                            _sliceEnd = _totalDuration > 10.0 ? 10.0 : _totalDuration;
-                          });
-                        },
-                        icon: const Icon(Icons.stop, color: Colors.white),
-                        label: const Text('DỪNG VÀ PHÂN TÍCH', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_totalDuration > 1.0) ...[
-                        const Text(
-                          'Phân đoạn dữ liệu dáng đi (Double-slider Crop)',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Text(
-                              'Bắt đầu: ${_sliceStart.toStringAsFixed(1)}s',
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: AppColors.accent, fontWeight: FontWeight.bold),
-                            ),
-                            Expanded(
-                              child: RangeSlider(
-                                values: RangeValues(_sliceStart, _sliceEnd),
-                                min: 0.0,
-                                max: _totalDuration,
-                                activeColor: AppColors.accent,
-                                inactiveColor: AppColors.border,
-                                labels: RangeLabels(
-                                  '${_sliceStart.toStringAsFixed(1)}s',
-                                  '${_sliceEnd.toStringAsFixed(1)}s',
-                                ),
-                                onChanged: (values) {
-                                  setState(() {
-                                    _sliceStart = values.start;
-                                    _sliceEnd = values.end;
-                                  });
-                                },
-                              ),
-                            ),
-                            Text(
-                              'Kết thúc: ${_sliceEnd.toStringAsFixed(1)}s (Tổng: ${_totalDuration.toStringAsFixed(1)}s)',
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: AppColors.accent, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        // Timeline with Markers visual feedback
-                        if (_localMarkers.isNotEmpty)
-                          Container(
-                            height: 24,
-                            padding: const EdgeInsets.symmetric(horizontal: 70),
-                            child: Stack(
-                              children: _localMarkers.map((m) {
-                                final offset = m['offset'] as double;
-                                final ratio = (offset / _totalDuration).clamp(0.0, 1.0);
-                                return Align(
-                                  alignment: Alignment(ratio * 2.0 - 1.0, 0.0),
-                                  child: Tooltip(
-                                    message: m['note'],
-                                    child: const Icon(Icons.flag, color: Colors.orange, size: 16),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                        const SizedBox(height: 12),
-                        // Inputs for Crop Segment
-                        Row(
-                          children: [
-                            Expanded(
-                              flex: 2,
-                              child: TextField(
-                                controller: _noteController,
-                                style: const TextStyle(fontSize: 13),
-                                decoration: InputDecoration(
-                                  labelText: 'Nhãn phiên / Ghi chú phân đoạn',
-                                  filled: true,
-                                  fillColor: AppColors.panel,
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: _scanType,
-                                dropdownColor: AppColors.panel,
-                                decoration: InputDecoration(
-                                  labelText: 'Loại phân tích',
-                                  filled: true,
-                                  fillColor: AppColors.panel,
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                ),
-                                items: const [
-                                  DropdownMenuItem(value: 'baseline', child: Text('Baseline chân lành', style: TextStyle(fontSize: 12))),
-                                  DropdownMenuItem(value: 'scan_1', child: Text('Scan #1 (Lần đầu)', style: TextStyle(fontSize: 12))),
-                                  DropdownMenuItem(value: 'scan_2', child: Text('Scan #2 (Sau tinh chỉnh)', style: TextStyle(fontSize: 12))),
-                                ],
-                                onChanged: (val) {
-                                  if (val != null) {
-                                    setState(() {
-                                      _scanType = val;
-                                    });
-                                  }
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            // Button crop and save
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.accent,
-                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              onPressed: provider.isLoading
-                                  ? null
-                                  : () async {
-                                      await provider.createSegmentAndScan(
-                                        session.id,
-                                        _sliceStart,
-                                        _sliceEnd,
-                                        _scanType,
-                                        _noteController.text,
-                                      );
-                                      // Switch to Tab 4: Phân tích dáng đi (Tab index 3)
-                                      provider.setTabIndex(3);
-                                    },
-                              icon: const Icon(Icons.insights, color: Colors.black),
-                              label: const Text(
-                                'TẠO PHÂN ĐOẠN & PHÂN TÍCH',
-                                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ] else ...[
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Ghi hình dáng đi mới',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
-                                ),
-                                Text(
-                                  'Nhấp BẮT ĐẦU GHI HÌNH để kích hoạt 2 luồng camera ghi dữ liệu dáng đi.',
-                                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                                ),
-                              ],
-                            ),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.accent,
-                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                              ),
-                              onPressed: () {
-                                provider.startRecording();
-                                setState(() {
-                                  _localMarkers.clear();
-                                });
-                              },
-                              icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
-                              label: const Text(
-                                'BẮT ĐẦU GHI HÌNH',
-                                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCameraPreview({
-    required String title,
-    required String streamUrl,
-    required bool isRecording,
-    required double elapsed,
-  }) {
+  Widget _empty(SessionProvider provider) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.person_search_outlined,
+            size: 48,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Ch\u01b0a ch\u1ecdn b\u1ec7nh nh\u00e2n ho\u1eb7c phi\u00ean \u0111o',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () => provider.setTabIndex(0),
+            child: const Text('V\u1ec0 H\u1ed2 S\u01a0 B\u1ec6NH NH\u00c2N'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBar(
+    SessionProvider provider,
+    GaitSession session,
+  ) {
+    final recording = session.isRecording;
     return Container(
-      margin: const EdgeInsets.all(12),
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(
+        color: AppColors.panel,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: recording ? AppColors.critical : AppColors.baseline,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Text(
+            recording
+                ? '\u0110ang ghi'
+                : 'Phi\u00ean ghi \u0111\u00e3 d\u1eebng',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (recording) ...[
+            const SizedBox(width: 12),
+            Text(
+              _clock(session.recordingElapsedSec),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.critical,
+              ),
+            ),
+          ],
+          const Spacer(),
+          if (recording) ...[
+            OutlinedButton.icon(
+              onPressed: provider.isLoading
+                  ? null
+                  : () => _toggleMarker(provider, session),
+              icon: Icon(
+                _pendingStart == null ? Icons.flag_outlined : Icons.flag,
+                size: 16,
+              ),
+              label: Text(
+                _pendingStart == null
+                    ? '\u0110\u1eb6T M\u1ed0C \u0110\u1ea6U'
+                    : 'M\u1ed0C CU\u1ed0I & L\u01afU',
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _pendingStart == null
+                    ? AppColors.warning
+                    : AppColors.accentGreen,
+                side: BorderSide(
+                  color: _pendingStart == null
+                      ? AppColors.warning
+                      : AppColors.accentGreen,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 11,
+                ),
+              ),
+            ),
+            const SizedBox(width: 9),
+            FilledButton.icon(
+              onPressed: () => _stopRecording(provider),
+              icon: const Icon(Icons.stop, size: 16),
+              label: const Text('D\u1eeaNG GHI'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.critical,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
+                ),
+              ),
+            ),
+          ] else ...[
+            if (_segments.isNotEmpty || session.scans.isNotEmpty) ...[
+              TextButton.icon(
+                onPressed: () => provider.setTabIndex(3),
+                icon: const Icon(Icons.analytics_outlined, size: 16),
+                label: const Text('XEM PH\u00c2N T\u00cdCH'),
+              ),
+              const SizedBox(width: 8),
+            ],
+            FilledButton.icon(
+              onPressed:
+                  provider.isLoading ? null : () => _startRecording(provider),
+              icon: const Icon(Icons.fiber_manual_record, size: 15),
+              label: const Text('B\u1eaeT \u0110\u1ea6U GHI'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _workspaceToolbar() {
+    return SizedBox(
+      height: 34,
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
+            icon: const Icon(Icons.menu, size: 20),
+            tooltip: 'M\u1edf menu',
+            visualDensity: VisualDensity.compact,
+          ),
+          const Text(
+            'SCAN / GAIT ANALYSIS',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const Spacer(),
+          if (_selectedCharts.isNotEmpty)
+            Text(
+              '${_selectedCharts.length} bi\u1ec3u \u0111\u1ed3 \u0111ang hi\u1ec3n th\u1ecb',
+              style: const TextStyle(
+                fontSize: 9,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          const SizedBox(width: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _cameraWorkspace(GaitSession session) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+      child: Row(
+        children: [
+          Expanded(
+            child: _cameraCard(
+              title: 'CAM 1 \u00b7 CH\u00cdNH DI\u1ec6N',
+              url: 'http://127.0.0.1:8000/video_feed_0',
+              connected: _camera0Connected,
+              session: session,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _cameraCard(
+              title: 'CAM 2 \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC',
+              url: 'http://127.0.0.1:8000/video_feed_1',
+              connected: _camera1Connected,
+              session: session,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cameraCard({
+    required String title,
+    required String url,
+    required bool? connected,
+    required GaitSession session,
+  }) {
+    final stateText = connected == null
+        ? '\u0110ang k\u1ebft n\u1ed1i'
+        : connected
+            ? '\u0110ang ho\u1ea1t \u0111\u1ed9ng'
+            : 'M\u1ea5t t\u00edn hi\u1ec7u';
+    final stateColor = connected == null
+        ? AppColors.warning
+        : connected
+            ? AppColors.accentGreen
+            : AppColors.critical;
+
+    return Container(
       decoration: BoxDecoration(
         color: AppColors.panel,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          Positioned.fill(child: createVideoStreamWidget(streamUrl)),
-          // HUD labels
+          Positioned.fill(
+            child: connected == true
+                ? createVideoStreamWidget(url)
+                : ColoredBox(
+                    color: AppColors.surfaceMuted,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            connected == null
+                                ? Icons.sync
+                                : Icons.videocam_off_outlined,
+                            size: 30,
+                            color: AppColors.baseline,
+                          ),
+                          const SizedBox(height: 7),
+                          Text(
+                            stateText,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
           Positioned(
-            top: 12,
-            left: 12,
+            left: 9,
+            top: 9,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
               decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(4),
+                color: AppColors.panel.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(5),
               ),
               child: Text(
                 title,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.accent),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
-          if (isRecording)
-            Positioned(
-              top: 12,
-              right: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.red[900],
-                  borderRadius: BorderRadius.circular(4),
+          Positioned(
+            right: 9,
+            top: 9,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 7,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.panel.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: stateColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    session.isRecording && connected == true
+                        ? 'REC'
+                        : stateText,
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                      color: session.isRecording && connected == true
+                          ? AppColors.critical
+                          : stateColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartWorkspace() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.monitor_heart_outlined,
+                  size: 15,
+                  color: AppColors.accent,
                 ),
+                SizedBox(width: 7),
+                Text(
+                  'BI\u1ec2U \u0110\u1ed2 REALTIME',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: RealtimeChartWorkspace(
+              selectedCharts: _selectedCharts,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sidebar(Patient patient, GaitSession session) {
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      left: _sidebarOpen ? 0 : -286,
+      top: 0,
+      bottom: 0,
+      width: 286,
+      child: Material(
+        color: AppColors.panel,
+        elevation: 8,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              SizedBox(
+                height: 48,
                 child: Row(
                   children: [
-                    Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle)),
-                    const SizedBox(width: 6),
-                    Text(
-                      'REC: ${elapsed.toStringAsFixed(1)}s',
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                    IconButton(
+                      onPressed: () => setState(() => _sidebarOpen = false),
+                      icon: const Icon(Icons.menu_open),
+                      tooltip: '\u0110\u00f3ng menu',
+                    ),
+                    const Text(
+                      'WORKSPACE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.6,
+                      ),
                     ),
                   ],
                 ),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class InsoleHeatmapWidget extends StatelessWidget {
-  const InsoleHeatmapWidget({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(top: 12, bottom: 12, right: 12, left: 4),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Bản đồ áp lực Insole (FSR)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-              ),
-              Row(
-                children: [
-                  Icon(Icons.bluetooth_searching, color: Colors.blue[300], size: 14),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Chờ phần cứng',
-                    style: TextStyle(fontSize: 10, color: Colors.blue[300], fontWeight: FontWeight.bold),
-                  ),
-                ],
+              const Divider(height: 1, color: AppColors.border),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  children: [
+                    _menuItem(
+                      Icons.radar,
+                      'Scan / Phi\u00ean \u0111o',
+                      active: true,
+                    ),
+                    _menuItem(
+                      Icons.videocam_outlined,
+                      'Camera',
+                      trailing: Text(
+                        _camera0Connected == true && _camera1Connected == true
+                            ? '2/2'
+                            : '0\u20132/2',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    Theme(
+                      data: Theme.of(context).copyWith(
+                        dividerColor: Colors.transparent,
+                      ),
+                      child: ExpansionTile(
+                        initiallyExpanded: _chartsExpanded,
+                        onExpansionChanged: (value) =>
+                            setState(() => _chartsExpanded = value),
+                        leading: const Icon(
+                          Icons.insert_chart_outlined,
+                          size: 19,
+                        ),
+                        title: const Text(
+                          'Bi\u1ec3u \u0111\u1ed3',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        children: [
+                          for (final chart in RealtimeChartType.values)
+                            CheckboxListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              contentPadding:
+                                  const EdgeInsets.only(left: 28, right: 12),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: _selectedCharts.contains(chart),
+                              title: Text(
+                                chart.label,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              onChanged: (checked) {
+                                setState(() {
+                                  if (checked == true) {
+                                    _selectedCharts.add(chart);
+                                  } else {
+                                    _selectedCharts.remove(chart);
+                                  }
+                                });
+                              },
+                            ),
+                          if (_selectedCharts.isNotEmpty)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: () =>
+                                    setState(_selectedCharts.clear),
+                                child: const Text(
+                                  'B\u1ece CH\u1eccN',
+                                  style: TextStyle(fontSize: 10),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    ExpansionTile(
+                      leading: const Icon(
+                        Icons.info_outline,
+                        size: 19,
+                      ),
+                      title: const Text(
+                        'Th\u00f4ng tin phi\u00ean',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      childrenPadding: const EdgeInsets.fromLTRB(54, 0, 14, 10),
+                      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'ID: ${session.id}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'B\u1ec7nh nh\u00e2n: ${patient.name}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Th\u1eddi l\u01b0\u1ee3ng: ${_clock(session.recordingElapsedSec)}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _menuItem(
+                      Icons.settings_outlined,
+                      'C\u00e0i \u0111\u1eb7t',
+                      onTap: () => _message(
+                        'C\u00e0i \u0111\u1eb7t camera v\u00e0 thi\u1ebft b\u1ecb s\u1ebd \u0111\u01b0\u1ee3c b\u1ed5 sung t\u1ea1i \u0111\u00e2y.',
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          const Text(
-            'Chỉ số lực Insole thực tế truyền trực tiếp qua Bluetooth. Hiện đã gỡ bộ dữ liệu giả lập ở Client.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(child: _buildFootGrid('CHÂN TRÁI')),
-                const VerticalDivider(color: AppColors.border, width: 24),
-                Expanded(child: _buildFootGrid('CHÂN PHẢI')),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildFootGrid(String label) {
-    return Column(
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+  Widget _menuItem(
+    IconData icon,
+    String label, {
+    bool active = false,
+    Widget? trailing,
+    VoidCallback? onTap,
+  }) {
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        icon,
+        size: 19,
+        color: active ? AppColors.accent : AppColors.textSecondary,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+          color: active ? AppColors.accent : AppColors.textPrimary,
         ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final double cellSize = (min(constraints.maxWidth, constraints.maxHeight) - 24) / 8;
-              return Center(
-                child: SizedBox(
-                  width: cellSize * 8 + 14,
-                  height: cellSize * 8 + 14,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 8,
-                      crossAxisSpacing: 2,
-                      mainAxisSpacing: 2,
-                    ),
-                    itemCount: 64,
-                    itemBuilder: (context, index) {
-                      final row = index ~/ 8;
-                      final col = index % 8;
-                      final isFoot = _isCellInFootContour(row, col);
-                      
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: isFoot ? Colors.blueGrey.withValues(alpha: 0.15) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+      ),
+      trailing: trailing,
+      selected: active,
+      selectedTileColor: AppColors.accent.withValues(alpha: 0.08),
+      onTap: onTap,
     );
-  }
-
-  bool _isCellInFootContour(int row, int col) {
-    if (row == 0) return col >= 3 && col <= 5;
-    if (row == 1) return col >= 2 && col <= 6;
-    if (row == 2) return col >= 2 && col <= 6;
-    if (row == 3) return col >= 2 && col <= 5;
-    if (row == 4) return col >= 3 && col <= 5;
-    if (row == 5) return col >= 3 && col <= 5;
-    if (row == 6) return col >= 3 && col <= 5;
-    if (row == 7) return col >= 3 && col <= 5;
-    return false;
   }
 }

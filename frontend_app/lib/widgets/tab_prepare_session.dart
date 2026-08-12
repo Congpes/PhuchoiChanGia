@@ -92,11 +92,15 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.person_search_outlined, size: 64, color: AppColors.textSecondary),
+            const Icon(Icons.person_search_outlined,
+                size: 64, color: AppColors.textSecondary),
             const SizedBox(height: 16),
             const Text(
               'Chưa chọn bệnh nhân',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: AppColors.textPrimary),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -106,15 +110,18 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: () => provider.setTabIndex(0),
-              icon: const Icon(Icons.people_outline, color: Colors.black),
+              icon: const Icon(Icons.people_outline, color: AppColors.onAccent),
               label: const Text(
                 'QUAY LẠI HỒ SƠ BỆNH NHÂN',
-                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: AppColors.onAccent, fontWeight: FontWeight.bold),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
               ),
             ),
           ],
@@ -136,21 +143,26 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                 Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back, color: AppColors.accent, size: 20),
+                      icon: const Icon(Icons.arrow_back,
+                          color: AppColors.accent, size: 20),
                       onPressed: () => provider.setTabIndex(0),
                       tooltip: 'Quay lại Hồ sơ bệnh nhân',
                     ),
                     const SizedBox(width: 8),
                     const Text(
                       'Xem trước góc quay Camera & Đo lường sinh học',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 const Text(
                   'Bác sĩ kiểm tra góc đặt camera để đảm bảo MediaPipe tracking khớp hông, gối, cổ chân chính xác.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  style:
+                      TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 16),
                 Expanded(
@@ -163,7 +175,8 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           streamUrl: 'http://localhost:8000/video_feed_0',
                           overlayLines: [
                             const _LineOverlay(isVertical: true, position: 0.5),
-                            const _LineOverlay(isVertical: false, position: 0.35),
+                            const _LineOverlay(
+                                isVertical: false, position: 0.35),
                           ],
                         ),
                       ),
@@ -174,8 +187,10 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           title: 'Góc chụp ngang (Sagittal Camera)',
                           streamUrl: 'http://localhost:8000/video_feed_1',
                           overlayLines: [
-                            const _LineOverlay(isVertical: false, position: 0.5),
-                            const _LineOverlay(isVertical: false, position: 0.75),
+                            const _LineOverlay(
+                                isVertical: false, position: 0.5),
+                            const _LineOverlay(
+                                isVertical: false, position: 0.75),
                           ],
                         ),
                       ),
@@ -193,7 +208,8 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: AppColors.accent, size: 24),
+                      const Icon(Icons.info_outline,
+                          color: AppColors.accent, size: 24),
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Column(
@@ -201,11 +217,15 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           children: [
                             Text(
                               'Đồng bộ hóa Insole & Camera thành công',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14),
                             ),
                             Text(
                               'Giao tiếp Bluetooth (FSR Matrix) và Video Stream đã sẵn sàng ghi hình dáng đi.',
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                              style: TextStyle(
+                                  color: AppColors.textSecondary, fontSize: 12),
                             ),
                           ],
                         ),
@@ -213,18 +233,23 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.accent,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: () async {
                           await _savePatientDetails(provider);
                           // Switch to Tab 3 (Scan / Quét & Ghi hình)
                           provider.setTabIndex(2);
                         },
-                        icon: const Icon(Icons.play_circle_outline, color: Colors.black),
+                        icon: const Icon(Icons.play_circle_outline,
+                            color: AppColors.onAccent),
                         label: const Text(
                           'BẮT ĐẦU GHI HÌNH',
-                          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                              color: AppColors.onAccent,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -251,48 +276,72 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                   children: [
                     Text(
                       'Hồ sơ lâm sàng: ${patient.name}',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 16),
                     // Demographic details
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildPatientDetailChip(Icons.cake_outlined, '${patient.age} tuổi'),
-                        _buildPatientDetailChip(Icons.height, '${patient.heightCm} cm'),
-                        _buildPatientDetailChip(Icons.scale_outlined, '${patient.weightKg} kg'),
-                        _buildPatientDetailChip(Icons.accessibility_new, patient.prostheticLeg == LegSide.left ? 'Giả Trái' : 'Giả Phải'),
+                        _buildPatientDetailChip(
+                            Icons.cake_outlined, '${patient.age} tuổi'),
+                        _buildPatientDetailChip(
+                            Icons.height, '${patient.heightCm} cm'),
+                        _buildPatientDetailChip(
+                            Icons.scale_outlined, '${patient.weightKg} kg'),
+                        _buildPatientDetailChip(
+                            Icons.accessibility_new,
+                            patient.prostheticLeg == LegSide.left
+                                ? 'Giả Trái'
+                                : 'Giả Phải'),
                       ],
                     ),
                     const SizedBox(height: 16),
                     const Divider(color: AppColors.border),
                     const SizedBox(height: 12),
                     // Injury History & Goals
-                    const Text('Tiền sử chấn thương & Bệnh lý', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+                    const Text('Tiền sử chấn thương & Bệnh lý',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.textSecondary)),
                     const SizedBox(height: 6),
                     TextFormField(
                       controller: _injuryController,
                       maxLines: 2,
                       style: const TextStyle(fontSize: 13),
                       decoration: InputDecoration(
-                        hintText: 'Nhập thông tin chấn thương, năm phẫu thuật, tình trạng mỏm cụt...',
+                        hintText:
+                            'Nhập thông tin chấn thương, năm phẫu thuật, tình trạng mỏm cụt...',
                         filled: true,
                         fillColor: AppColors.sidebar,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const Text('Mục tiêu phục hồi / Điều chỉnh van', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+                    const Text('Mục tiêu phục hồi / Điều chỉnh van',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.textSecondary)),
                     const SizedBox(height: 6),
                     TextFormField(
                       controller: _goalsController,
                       maxLines: 2,
                       style: const TextStyle(fontSize: 13),
                       decoration: InputDecoration(
-                        hintText: 'Mục tiêu căn chỉnh van (ví dụ: Giảm khập khiễng, tăng đối xứng lực...)',
+                        hintText:
+                            'Mục tiêu căn chỉnh van (ví dụ: Giảm khập khiễng, tăng đối xứng lực...)',
                         filled: true,
                         fillColor: AppColors.sidebar,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -301,22 +350,33 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                       children: [
                         TextButton.icon(
                           onPressed: () => _savePatientDetails(provider),
-                          icon: const Icon(Icons.save_outlined, size: 16, color: AppColors.accent),
-                          label: const Text('Lưu thông tin bệnh lý', style: TextStyle(color: AppColors.accent, fontSize: 12, fontWeight: FontWeight.bold)),
+                          icon: const Icon(Icons.save_outlined,
+                              size: 16, color: AppColors.accent),
+                          label: const Text('Lưu thông tin bệnh lý',
+                              style: TextStyle(
+                                  color: AppColors.accent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
                     const Divider(color: AppColors.border),
                     const SizedBox(height: 8),
                     // Clinical Notes panel
-                    const Text('Nhật ký Ghi chú Lâm sàng', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
+                    const Text('Nhật ký Ghi chú Lâm sàng',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: AppColors.textPrimary)),
                     const SizedBox(height: 8),
                     Expanded(
                       child: patient.clinicalNotes.isEmpty
                           ? const Center(
                               child: Text(
                                 'Chưa có ghi chú nào. Hãy thêm ghi chú mới bên dưới.',
-                                style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 12),
                               ),
                             )
                           : ListView.builder(
@@ -328,41 +388,64 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                                   margin: const EdgeInsets.only(bottom: 8),
                                   padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
-                                    color: isHistory ? Colors.blueGrey.withValues(alpha: 0.15) : Colors.redAccent.withValues(alpha: 0.1),
+                                    color: isHistory
+                                        ? Colors.blueGrey
+                                            .withValues(alpha: 0.15)
+                                        : Colors.redAccent
+                                            .withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(8),
                                     border: Border.all(
-                                      color: isHistory ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2),
+                                      color: isHistory
+                                          ? Colors.blue.withValues(alpha: 0.2)
+                                          : Colors.red.withValues(alpha: 0.2),
                                     ),
                                   ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
                                         children: [
                                           Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: isHistory ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2),
-                                              borderRadius: BorderRadius.circular(4),
+                                              color: isHistory
+                                                  ? Colors.blue
+                                                      .withValues(alpha: 0.2)
+                                                  : Colors.red
+                                                      .withValues(alpha: 0.2),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              isHistory ? 'TIỀN SỬ' : 'TRIỆU CHỨNG',
+                                              isHistory
+                                                  ? 'TIỀN SỬ'
+                                                  : 'TRIỆU CHỨNG',
                                               style: TextStyle(
                                                 fontSize: 9,
                                                 fontWeight: FontWeight.bold,
-                                                color: isHistory ? Colors.blue[300] : Colors.red[300],
+                                                color: isHistory
+                                                    ? Colors.blue[300]
+                                                    : Colors.red[300],
                                               ),
                                             ),
                                           ),
                                           Text(
                                             _formatTime(note.createdAt),
-                                            style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                                            style: const TextStyle(
+                                                fontSize: 10,
+                                                color: AppColors.textSecondary),
                                           ),
                                         ],
                                       ),
                                       const SizedBox(height: 6),
-                                      Text(note.content, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                                      Text(note.content,
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: AppColors.textSecondary)),
                                     ],
                                   ),
                                 );
@@ -378,11 +461,15 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                             controller: _noteController,
                             style: const TextStyle(fontSize: 12),
                             decoration: InputDecoration(
-                              hintText: 'Nhập ghi chú hoặc biểu hiện lâm sàng mới...',
+                              hintText:
+                                  'Nhập ghi chú hoặc biểu hiện lâm sàng mới...',
                               filled: true,
                               fillColor: AppColors.sidebar,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide.none),
                             ),
                           ),
                         ),
@@ -392,8 +479,14 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           dropdownColor: AppColors.panel,
                           underline: const SizedBox(),
                           items: const [
-                            DropdownMenuItem(value: 'history', child: Text('Tiền sử', style: TextStyle(fontSize: 12))),
-                            DropdownMenuItem(value: 'symptom', child: Text('Triệu chứng', style: TextStyle(fontSize: 12))),
+                            DropdownMenuItem(
+                                value: 'history',
+                                child: Text('Tiền sử',
+                                    style: TextStyle(fontSize: 12))),
+                            DropdownMenuItem(
+                                value: 'symptom',
+                                child: Text('Triệu chứng',
+                                    style: TextStyle(fontSize: 12))),
                           ],
                           onChanged: (val) {
                             if (val != null) {
@@ -407,10 +500,12 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                         IconButton(
                           style: IconButton.styleFrom(
                             backgroundColor: AppColors.accent,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
                           ),
                           onPressed: () => _addClinicalNote(provider),
-                          icon: const Icon(Icons.add, color: Colors.black, size: 18),
+                          icon: const Icon(Icons.add,
+                              color: AppColors.onAccent, size: 18),
                         ),
                       ],
                     ),
@@ -437,7 +532,11 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
         children: [
           Icon(icon, size: 13, color: AppColors.accent),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary)),
         ],
       ),
     );
@@ -477,7 +576,10 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
               ),
               child: Text(
                 title,
-                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                    color: AppColors.onAccent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -487,16 +589,21 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: AppColors.accent.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.check, color: Colors.black, size: 10),
+                      Icon(Icons.check, color: AppColors.onAccent, size: 10),
                       SizedBox(width: 2),
-                      Text('ALIGNMENT: OK', style: TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
+                      Text('ALIGNMENT: OK',
+                          style: TextStyle(
+                              color: AppColors.onAccent,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),

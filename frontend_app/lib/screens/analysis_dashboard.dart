@@ -16,7 +16,8 @@ class AnalysisDashboard extends StatefulWidget {
   State<AnalysisDashboard> createState() => _AnalysisDashboardState();
 }
 
-class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTickerProviderStateMixin {
+class _AnalysisDashboardState extends State<AnalysisDashboard>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -45,7 +46,10 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    fontSize: 13),
               ),
             ),
           ],
@@ -54,7 +58,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
     );
   }
 
-  void _handleMenuSelection(BuildContext context, SessionProvider provider, int value) {
+  void _handleMenuSelection(
+      BuildContext context, SessionProvider provider, int value) {
     if (value >= 0 && value <= 7) {
       final targetIndex = value;
       String? blockedMessage;
@@ -71,9 +76,11 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
         }
       } else if (targetIndex == 3) {
         if (provider.activePatient == null) {
-          blockedMessage = 'Vui lòng chọn bệnh nhân và khởi động phiên khám trước.';
+          blockedMessage =
+              'Vui lòng chọn bệnh nhân và khởi động phiên khám trước.';
         } else if (provider.activeSession == null) {
-          blockedMessage = 'Chưa có phiên khám nào. Vui lòng bắt đầu tại Tab 1.';
+          blockedMessage =
+              'Chưa có phiên khám nào. Vui lòng bắt đầu tại Tab 1.';
         }
       } else if (targetIndex == 4) {
         if (provider.activePatient == null) {
@@ -108,17 +115,23 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _dbInfoItem('Công nghệ lưu trữ', 'SQLite 3 (Relational Database)'),
+              _dbInfoItem(
+                  'Công nghệ lưu trữ', 'SQLite 3 (Relational Database)'),
               _dbInfoItem('Vị trí Tệp dữ liệu', 'backend/gait_analysis.db'),
-              _dbInfoItem('Bảng lưu trữ', 'patients, sessions, scans, segments, clinical_notes, exercises, practice_attempts'),
-              _dbInfoItem('Trạng thái kết nối', 'ONLINE (Connected via FastAPI on :8000)'),
-              _dbInfoItem('Số hồ sơ bệnh án hiện tại', '${provider.patients.length} hồ sơ'),
+              _dbInfoItem('Bảng lưu trữ',
+                  'patients, sessions, scans, segments, clinical_notes, exercises, practice_attempts'),
+              _dbInfoItem('Trạng thái kết nối',
+                  'ONLINE (Connected via FastAPI on :8000)'),
+              _dbInfoItem('Số hồ sơ bệnh án hiện tại',
+                  '${provider.patients.length} hồ sơ'),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('ĐÓNG', style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.bold)),
+              child: const Text('ĐÓNG',
+                  style: TextStyle(
+                      color: AppColors.accent, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -132,18 +145,22 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary)),
         ],
       ),
     );
   }
 
   Widget _buildMenuButton(BuildContext context, SessionProvider provider) {
-    final patient = provider.activePatient;
-    final text = patient != null ? patient.name : 'Menu tiện ích';
-    final icon = patient != null ? Icons.person : Icons.menu;
+    const accountIcon = Icons.person;
 
     return PopupMenuButton<int>(
       color: AppColors.panel,
@@ -162,15 +179,19 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
             CircleAvatar(
               radius: 10,
               backgroundColor: AppColors.accent.withValues(alpha: 0.2),
-              child: Icon(icon, size: 12, color: AppColors.accent),
+              child: const Icon(accountIcon, size: 12, color: AppColors.accent),
             ),
             const SizedBox(width: 8),
             Text(
-              text,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+              'K\u1ef9 thu\u1eadt vi\u00ean',
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary),
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.arrow_drop_down, size: 16, color: AppColors.textSecondary),
+            const Icon(Icons.arrow_drop_down,
+                size: 16, color: AppColors.textSecondary),
           ],
         ),
       ),
@@ -182,7 +203,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 0,
           child: Row(
             children: [
-              Icon(Icons.people_outline, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.people_outline,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('1. Hồ sơ bệnh nhân', style: TextStyle(fontSize: 13)),
             ],
@@ -192,7 +214,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 1,
           child: Row(
             children: [
-              Icon(Icons.note_alt_outlined, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.note_alt_outlined,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('2. Chuẩn bị phiên khám', style: TextStyle(fontSize: 13)),
             ],
@@ -202,7 +225,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 2,
           child: Row(
             children: [
-              Icon(Icons.videocam_outlined, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.videocam_outlined,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('3. Quét & Ghi hình', style: TextStyle(fontSize: 13)),
             ],
@@ -212,7 +236,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 3,
           child: Row(
             children: [
-              Icon(Icons.analytics_outlined, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.analytics_outlined,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('4. Phân tích dáng đi', style: TextStyle(fontSize: 13)),
             ],
@@ -222,7 +247,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 4,
           child: Row(
             children: [
-              Icon(Icons.history_outlined, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.history_outlined,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('5. Lịch sử & So sánh', style: TextStyle(fontSize: 13)),
             ],
@@ -235,7 +261,11 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
             children: [
               Icon(Icons.add, size: 18, color: AppColors.accent),
               SizedBox(width: 10),
-              Text('Thêm bệnh án mới', style: TextStyle(fontSize: 13, color: AppColors.accent, fontWeight: FontWeight.bold)),
+              Text('Thêm bệnh án mới',
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.accent,
+                      fontWeight: FontWeight.bold)),
             ],
           ),
         ),
@@ -243,7 +273,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
           value: 9,
           child: Row(
             children: [
-              Icon(Icons.storage_outlined, size: 18, color: Colors.white70),
+              Icon(Icons.storage_outlined,
+                  size: 18, color: AppColors.textSecondary),
               SizedBox(width: 10),
               Text('Thông tin Cơ sở dữ liệu', style: TextStyle(fontSize: 13)),
             ],
@@ -279,12 +310,15 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.white10,
+                color: AppColors.surfaceMuted,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: const Text(
                 'PHÒNG LAB',
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textSecondary),
               ),
             ),
           ],
@@ -300,7 +334,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard> with SingleTicker
       ),
       body: TabBarView(
         controller: _tabController,
-        physics: const NeverScrollableScrollPhysics(), // prevent swiping gestures during active workflows
+        physics:
+            const NeverScrollableScrollPhysics(), // prevent swiping gestures during active workflows
         children: [
           const TabPatients(),
           const TabPrepareSession(),

@@ -26,7 +26,7 @@ class AnalysisSidebar extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                _SectionTitle('Phiên tinh chỉnh'),
+                const _SectionTitle('Phiên tinh chỉnh'),
                 _PhaseTile(
                   label: '1. Baseline chân lành',
                   phase: SessionPhase.baseline,
@@ -54,7 +54,7 @@ class AnalysisSidebar extends StatelessWidget {
                   onTap: () => provider.startRescan(),
                 ),
                 const SizedBox(height: 12),
-                _SectionTitle('Cấu hình'),
+                const _SectionTitle('Cấu hình'),
                 _LegSelector(
                   label: 'Chân lành',
                   leftSelected: provider.activePatient?.healthyLeg == LegSide.left,
@@ -63,10 +63,10 @@ class AnalysisSidebar extends StatelessWidget {
                 ),
                 _ProstheticSelector(provider: provider),
                 const SizedBox(height: 12),
-                _SectionTitle('Recording'),
+                const _SectionTitle('Recording'),
                 _RecordingControl(provider: provider, session: session),
                 const SizedBox(height: 12),
-                _SectionTitle('Đề xuất tinh chỉnh'),
+                const _SectionTitle('Đề xuất tinh chỉnh'),
                 ...session.recommendations.map((r) => _RecommendationCard(r: r)),
                 if (session.recommendations.isEmpty)
                   const Padding(
@@ -78,7 +78,7 @@ class AnalysisSidebar extends StatelessWidget {
                   ),
                 if (provider.comparisonSummary != null) ...[
                   const SizedBox(height: 8),
-                  _SectionTitle('So sánh Before / After'),
+                  const _SectionTitle('So sánh Before / After'),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
@@ -334,7 +334,7 @@ class _ProstheticSelector extends StatelessWidget {
           const Text('Chân giả', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           DropdownButtonFormField<LegSide>(
-            value: patient?.prostheticLeg,
+            initialValue: patient?.prostheticLeg,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),

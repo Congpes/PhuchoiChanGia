@@ -19,7 +19,7 @@ class _TimelineBarState extends State<TimelineBar> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>().session;
-    final maxSec = MeasurementConfig.recordingDurationSec;
+    const maxSec = MeasurementConfig.recordingDurationSec;
 
     return Container(
       height: 84,

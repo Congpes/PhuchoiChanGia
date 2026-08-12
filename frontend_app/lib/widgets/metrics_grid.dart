@@ -81,12 +81,16 @@ class MetricsGrid extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 20),
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.orange[700], size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'AI Phát hiện Dấu hiệu Mỏi cơ (Fatigue Detected): Độ dốc biên độ dao động khớp giảm dần (Slope: ${scan.fatigueSlope.toStringAsFixed(3)}). Đề xuất giảm tải lực hoặc nghỉ ngơi.',
-                      style: TextStyle(color: Colors.orange[200], fontSize: 12, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                          color: Colors.orange[200],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500),
                     ),
                   ),
                 ],
@@ -104,7 +108,10 @@ class MetricsGrid extends StatelessWidget {
                     const SizedBox(height: 8),
                     const Text(
                       'Góc Khớp Hông & Nghiêng Xương Chậu (Sagittal / Frontal)',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -148,7 +155,10 @@ class MetricsGrid extends StatelessWidget {
                     const SizedBox(height: 8),
                     const Text(
                       'Góc Khớp Gối (Knee Flexion/Extension)',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -183,7 +193,10 @@ class MetricsGrid extends StatelessWidget {
                     const SizedBox(height: 8),
                     const Text(
                       'Góc Cổ Chân (Ankle Dorsiflexion/Plantarflexion)',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -220,7 +233,10 @@ class MetricsGrid extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'Phân tích áp áp lực Insole & Lực ổ mỏm cụt (FSR/CoP & Socket Torque)',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -239,7 +255,12 @@ class MetricsGrid extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Quỹ đạo tâm áp lực (CoP Trajectory) - Cảm biến thật', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white70)),
+                                const Text(
+                                    'Quỹ đạo tâm áp lực (CoP Trajectory) - Cảm biến thật',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.textSecondary)),
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
@@ -247,7 +268,9 @@ class MetricsGrid extends StatelessWidget {
                                       child: AspectRatio(
                                         aspectRatio: 0.6,
                                         child: CustomPaint(
-                                          painter: _CopTrajectoryPainter(trajectory: scan.copTrajectory, isLeft: true),
+                                          painter: _CopTrajectoryPainter(
+                                              trajectory: scan.copTrajectory,
+                                              isLeft: true),
                                         ),
                                       ),
                                     ),
@@ -256,7 +279,9 @@ class MetricsGrid extends StatelessWidget {
                                       child: AspectRatio(
                                         aspectRatio: 0.6,
                                         child: CustomPaint(
-                                          painter: _CopTrajectoryPainter(trajectory: scan.copTrajectory, isLeft: false),
+                                          painter: _CopTrajectoryPainter(
+                                              trajectory: scan.copTrajectory,
+                                              isLeft: false),
                                         ),
                                       ),
                                     ),
@@ -279,30 +304,56 @@ class MetricsGrid extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Mô-men lực khớp ổ mỏm cụt (Socket Torque)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white70)),
+                                const Text(
+                                    'Mô-men lực khớp ổ mỏm cụt (Socket Torque)',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.textSecondary)),
                                 const SizedBox(height: 8),
                                 const Text(
                                   'Tính toán dựa trên tải trọng GRF (Insole) & Lever Arm (CoP):',
-                                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary, height: 1.3),
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textSecondary,
+                                      height: 1.3),
                                 ),
                                 const SizedBox(height: 16),
-                                _buildTorqueItem('Socket Extension Moment (Max)', '-- N·m', 'Chờ dữ liệu phần cứng Insole'),
-                                _buildTorqueItem('Socket Flexion Moment (Max)', '-- N·m', 'Chờ dữ liệu phần cứng Insole'),
-                                _buildTorqueItem('Mô-men nghiêng cẳng chân', '-- N·m', 'Chờ kết nối thiết bị'),
+                                _buildTorqueItem(
+                                    'Socket Extension Moment (Max)',
+                                    '-- N·m',
+                                    'Chờ dữ liệu phần cứng Insole'),
+                                _buildTorqueItem('Socket Flexion Moment (Max)',
+                                    '-- N·m', 'Chờ dữ liệu phần cứng Insole'),
+                                _buildTorqueItem('Mô-men nghiêng cẳng chân',
+                                    '-- N·m', 'Chờ kết nối thiết bị'),
                                 const SizedBox(height: 16),
                                 Container(
                                   padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
-                                    color: Colors.white10,
+                                    color: AppColors.surfaceMuted,
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: const Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text('AI AUTO-FLAG RULES (PRE-HARDWARE):', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.accent)),
+                                      Text('AI AUTO-FLAG RULES (PRE-HARDWARE):',
+                                          style: TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppColors.accent)),
                                       SizedBox(height: 4),
-                                      Text('• Cảnh báo lệch lực: Trục CoP chân giả lệch ngoài biên > 1.2cm', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
-                                      Text('• Cảnh báo góc gối: ROM gối chân giả lăng < 45 độ ở pha swing', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+                                      Text(
+                                          '• Cảnh báo lệch lực: Trục CoP chân giả lệch ngoài biên > 1.2cm',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              color: AppColors.textSecondary)),
+                                      Text(
+                                          '• Cảnh báo góc gối: ROM gối chân giả lăng < 45 độ ở pha swing',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              color: AppColors.textSecondary)),
                                     ],
                                   ),
                                 ),
@@ -330,7 +381,8 @@ class MetricsGrid extends StatelessWidget {
     return maxVal - minVal;
   }
 
-  Widget _buildKpiBar(ScanResult scan, double kneeSymmetry, double forceSymmetry) {
+  Widget _buildKpiBar(
+      ScanResult scan, double kneeSymmetry, double forceSymmetry) {
     final cadence = scan.cadence;
     final stride = scan.strideLength;
 
@@ -361,7 +413,9 @@ class MetricsGrid extends StatelessWidget {
           Expanded(
             child: _buildKpiCard(
               title: 'NHỊP ĐIỆU (CADENCE)',
-              value: cadence != null ? '${cadence.toStringAsFixed(0)} bước/phút' : '--',
+              value: cadence != null
+                  ? '${cadence.toStringAsFixed(0)} bước/phút'
+                  : '--',
               icon: Icons.speed,
               color: AppColors.accent,
             ),
@@ -389,10 +443,14 @@ class MetricsGrid extends StatelessWidget {
           Expanded(
             child: _buildKpiCard(
               title: 'ĐỐI XỨNG LỰC INSOLE',
-              value: scan.plantarLoadSymmetry != null ? '${forceSymmetry.toStringAsFixed(1)}%' : '--%',
+              value: scan.plantarLoadSymmetry != null
+                  ? '${forceSymmetry.toStringAsFixed(1)}%'
+                  : '--%',
               subtitle: forceRating,
               icon: Icons.monitor_weight_outlined,
-              color: scan.plantarLoadSymmetry != null ? forceColor : AppColors.textSecondary,
+              color: scan.plantarLoadSymmetry != null
+                  ? forceColor
+                  : AppColors.textSecondary,
             ),
           ),
         ],
@@ -428,18 +486,28 @@ class MetricsGrid extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 10, color: AppColors.textSecondary, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   value,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary),
                 ),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: color,
+                        fontWeight: FontWeight.w500),
                   ),
                 ]
               ],
@@ -459,12 +527,22 @@ class MetricsGrid extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-              Text(val, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.accent)),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary)),
+              Text(val,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.accent)),
             ],
           ),
           const SizedBox(height: 2),
-          Text('Trạng thái: $status', style: const TextStyle(fontSize: 10, color: Colors.white54, fontStyle: FontStyle.italic)),
+          Text('Trạng thái: $status',
+              style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.baseline,
+                  fontStyle: FontStyle.italic)),
         ],
       ),
     );
@@ -491,7 +569,8 @@ class GaitChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPrimary = primaryCurve != null && primaryCurve!.angles.isNotEmpty;
-    final hasSecondary = secondaryCurve != null && secondaryCurve!.angles.isNotEmpty;
+    final hasSecondary =
+        secondaryCurve != null && secondaryCurve!.angles.isNotEmpty;
 
     if (!hasPrimary) {
       return Container(
@@ -506,11 +585,12 @@ class GaitChart extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.show_chart, color: Colors.white24, size: 32),
+              const Icon(Icons.show_chart, color: AppColors.border, size: 32),
               const SizedBox(height: 8),
               Text(
                 '$title: Chưa có dữ liệu',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 11),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -559,7 +639,10 @@ class GaitChart extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -568,7 +651,8 @@ class GaitChart extends StatelessWidget {
                   _buildLegendIndicator('Quét', lineColor),
                   if (hasSecondary) ...[
                     const SizedBox(width: 8),
-                    _buildLegendIndicator('Chuẩn', Colors.white54, isDashed: true),
+                    _buildLegendIndicator('Chuẩn', AppColors.baseline,
+                        isDashed: true),
                   ],
                 ],
               ),
@@ -590,7 +674,8 @@ class GaitChart extends StatelessWidget {
                       reservedSize: 32,
                       getTitlesWidget: (val, meta) => Text(
                         '${val.toInt()}°',
-                        style: const TextStyle(fontSize: 9, color: Colors.white30),
+                        style: const TextStyle(
+                            fontSize: 9, color: AppColors.textSecondary),
                       ),
                     ),
                   ),
@@ -599,15 +684,26 @@ class GaitChart extends StatelessWidget {
                       showTitles: true,
                       reservedSize: 18,
                       getTitlesWidget: (val, meta) {
-                        if (val == 0) return const Text('0%', style: TextStyle(fontSize: 9, color: Colors.white30));
-                        if (val == 50) return const Text('50%', style: TextStyle(fontSize: 9, color: Colors.white30));
-                        if (val == 100) return const Text('100%', style: TextStyle(fontSize: 9, color: Colors.white30));
+                        if (val == 0)
+                          return const Text('0%',
+                              style: TextStyle(
+                                  fontSize: 9, color: AppColors.textSecondary));
+                        if (val == 50)
+                          return const Text('50%',
+                              style: TextStyle(
+                                  fontSize: 9, color: AppColors.textSecondary));
+                        if (val == 100)
+                          return const Text('100%',
+                              style: TextStyle(
+                                  fontSize: 9, color: AppColors.textSecondary));
                         return const SizedBox.shrink();
                       },
                     ),
                   ),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
                 ),
                 borderData: FlBorderData(show: false),
                 minX: 0,
@@ -631,7 +727,7 @@ class GaitChart extends StatelessWidget {
                     LineChartBarData(
                       spots: spots2,
                       isCurved: true,
-                      color: Colors.white38,
+                      color: AppColors.baseline,
                       barWidth: 1.5,
                       dashArray: [4, 4],
                       isStrokeCapRound: true,
@@ -646,7 +742,8 @@ class GaitChart extends StatelessWidget {
     );
   }
 
-  Widget _buildLegendIndicator(String label, Color color, {bool isDashed = false}) {
+  Widget _buildLegendIndicator(String label, Color color,
+      {bool isDashed = false}) {
     return Row(
       children: [
         Container(
@@ -681,7 +778,10 @@ class _CopTrajectoryPainter extends CustomPainter {
     final bgPaint = Paint()
       ..color = AppColors.sidebar
       ..style = PaintingStyle.fill;
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, w, h), const Radius.circular(8)), bgPaint);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(0, 0, w, h), const Radius.circular(8)),
+        bgPaint);
 
     // Draw crosshair axes
     final axisPaint = Paint()
@@ -693,7 +793,7 @@ class _CopTrajectoryPainter extends CustomPainter {
 
     // Draw foot contour (outline shape)
     final footPaint = Paint()
-      ..color = Colors.white10
+      ..color = AppColors.surfaceMuted
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
     final footPath = Path();
@@ -756,7 +856,8 @@ class _CopTrajectoryPainter extends CustomPainter {
         final sx = (startPt[xKey] as num?)?.toDouble() ?? 0.0;
         final sy = (startPt[yKey] as num?)?.toDouble() ?? 0.0;
         if (sx != 0.0 || sy != 0.0) {
-          canvas.drawCircle(mapCoord(sx, sy), 4.0, Paint()..color = Colors.greenAccent);
+          canvas.drawCircle(
+              mapCoord(sx, sy), 4.0, Paint()..color = Colors.greenAccent);
         }
       }
     }

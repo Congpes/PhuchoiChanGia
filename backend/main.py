@@ -6,14 +6,13 @@ import time
 import threading
 import json
 import uuid
-import sqlite3
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Import custom sub-modules
-from database import DB_FILE, get_db_connection, init_db
+from database import get_db_connection, init_db
 from algorithms import (
     calculate_angle,
     resample,
@@ -234,6 +233,10 @@ if not SINGLE_CAMERA_MODE:
     thread_0.start()
 thread_1 = threading.Thread(target=camera_loop_1, daemon=True)
 thread_1.start()
+# Optional hardware/media services are installed after camera state exists.
+import sys
+from realtime_services import install_realtime_services
+install_realtime_services(app, sys.modules[__name__])
 
 def gen_frames(camera_index):
     while True:
@@ -291,7 +294,7 @@ def save_recorded_data_to_db():
         healthy_leg, active_session_id
     )
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     segment_id = "seg-default-" + str(uuid.uuid4())[:6]
@@ -438,7 +441,7 @@ def get_patients():
 @app.post("/patients")
 def create_patient(data: dict):
     new_id = "p-" + str(uuid.uuid4())[:6]
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO patients VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (new_id, data.get("name", "Bệnh nhân mới"), int(data.get("age", 30)),
@@ -464,7 +467,7 @@ def create_patient(data: dict):
 
 @app.put("/patients/{patient_id}")
 def update_patient(patient_id: str, data: dict):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE patients SET name=?, age=?, height_cm=?, weight_kg=?, healthy_leg=?, prosthetic_leg=?, injury_history=?, treatment_goals=? WHERE id=?",
                    (data.get("name"), int(data.get("age", 30)), float(data.get("heightCm", 170.0)), float(data.get("weightKg", 60.0)),
@@ -483,7 +486,7 @@ def create_session(patient_id: str, data: dict = None):
     new_sess_id = "s-" + str(uuid.uuid4())[:6]
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)", (new_sess_id, patient_id, created_at, is_practice_mode))
     conn.commit()
@@ -499,7 +502,7 @@ def create_session(patient_id: str, data: dict = None):
 
 @app.post("/scans/{session_id}/{scan_id}/adjustment")
 def save_adjustment(session_id: str, scan_id: str, data: dict):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE scans SET actual_adjustment_degrees = ?, actual_adjustment_notes = ? WHERE session_id = ? AND id = ?",
                    (float(data.get("degrees", 0.0)), data.get("notes", ""), session_id, scan_id))
@@ -593,7 +596,7 @@ def create_segment(session_id: str, data: dict):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     segment_id = "seg-" + str(uuid.uuid4())[:6]
@@ -636,7 +639,7 @@ def create_note(patient_id: str, data: dict):
     content = data.get("content", "")
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO clinical_notes VALUES (?, ?, ?, ?, ?, ?, ?)",
                    (new_id, patient_id, session_id, pinned_scan_id, note_type, content, created_at))

@@ -51,7 +51,10 @@ class TabPatients extends StatelessWidget {
                       const SizedBox(height: 32),
                       const Text(
                         'Hành động kiểm tra lâm sàng',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary),
                       ),
                       const SizedBox(height: 16),
                       _ClinicalActionCard(
@@ -112,10 +115,14 @@ class _PatientListPanelState extends State<_PatientListPanel> {
     final sorted = List<Patient>.from(patientsList);
     sorted.sort((a, b) {
       final aTime = a.sessions.isNotEmpty
-          ? a.sessions.map((s) => s.createdAt).reduce((curr, next) => curr.isAfter(next) ? curr : next)
+          ? a.sessions
+              .map((s) => s.createdAt)
+              .reduce((curr, next) => curr.isAfter(next) ? curr : next)
           : DateTime.fromMillisecondsSinceEpoch(0);
       final bTime = b.sessions.isNotEmpty
-          ? b.sessions.map((s) => s.createdAt).reduce((curr, next) => curr.isAfter(next) ? curr : next)
+          ? b.sessions
+              .map((s) => s.createdAt)
+              .reduce((curr, next) => curr.isAfter(next) ? curr : next)
           : DateTime.fromMillisecondsSinceEpoch(0);
       if (aTime != bTime) {
         return bTime.compareTo(aTime); // newest first
@@ -132,7 +139,8 @@ class _PatientListPanelState extends State<_PatientListPanel> {
 
     if (isSearching) {
       displayPatients = widget.patients.where((p) {
-        return p.name.toLowerCase().contains(_query) || p.id.toLowerCase().contains(_query);
+        return p.name.toLowerCase().contains(_query) ||
+            p.id.toLowerCase().contains(_query);
       }).toList();
     } else {
       displayPatients = _getRecentPatients(widget.patients);
@@ -148,7 +156,8 @@ class _PatientListPanelState extends State<_PatientListPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 8),
+            padding:
+                const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -167,7 +176,6 @@ class _PatientListPanelState extends State<_PatientListPanel> {
               ],
             ),
           ),
-          
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TextFormField(
@@ -175,7 +183,8 @@ class _PatientListPanelState extends State<_PatientListPanel> {
               decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Tìm kiếm bệnh nhân...',
-                prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.textSecondary),
+                prefixIcon: const Icon(Icons.search,
+                    size: 18, color: AppColors.textSecondary),
                 suffixIcon: isSearching
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 16),
@@ -184,21 +193,22 @@ class _PatientListPanelState extends State<_PatientListPanel> {
                         constraints: const BoxConstraints(),
                       )
                     : null,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
             ),
           ),
-          
           const Divider(height: 1),
-          
           if (widget.patients.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Text(
-                isSearching ? 'Kết quả tìm thấy (${displayPatients.length})' : 'Bệnh nhân gần đây',
+                isSearching
+                    ? 'Kết quả tìm thấy (${displayPatients.length})'
+                    : 'Bệnh nhân gần đây',
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
@@ -207,39 +217,48 @@ class _PatientListPanelState extends State<_PatientListPanel> {
                 ),
               ),
             ),
-
           Expanded(
             child: widget.provider.isLoading && widget.patients.isEmpty
                 ? const Center(child: CircularProgressIndicator())
                 : displayPatients.isEmpty
                     ? Center(
                         child: Text(
-                          isSearching ? 'Không tìm thấy kết quả' : 'Chưa có bệnh nhân nào',
-                          style: const TextStyle(color: AppColors.textSecondary),
+                          isSearching
+                              ? 'Không tìm thấy kết quả'
+                              : 'Chưa có bệnh nhân nào',
+                          style:
+                              const TextStyle(color: AppColors.textSecondary),
                         ),
                       )
                     : ListView.separated(
                         itemCount: displayPatients.length,
-                        separatorBuilder: (context, index) => const Divider(height: 1),
+                        separatorBuilder: (context, index) =>
+                            const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final p = displayPatients[index];
                           final isSelected = widget.activePatient?.id == p.id;
                           return ListTile(
                             selected: isSelected,
-                            selectedTileColor: AppColors.accent.withValues(alpha: 0.1),
+                            selectedTileColor:
+                                AppColors.accent.withValues(alpha: 0.1),
                             title: Text(
                               p.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
                             ),
                             subtitle: Text(
                               'ID: ${p.id} | ${p.age} tuổi | Chân giả: ${p.prostheticLeg == LegSide.left ? 'Trái' : 'Phải'}',
                               style: const TextStyle(fontSize: 12),
                             ),
                             leading: CircleAvatar(
-                              backgroundColor: isSelected ? AppColors.accent : AppColors.panel,
+                              backgroundColor: isSelected
+                                  ? AppColors.accent
+                                  : AppColors.panel,
                               child: Icon(
                                 Icons.person,
-                                color: isSelected ? Colors.black : AppColors.textSecondary,
+                                color: isSelected
+                                    ? AppColors.onAccent
+                                    : AppColors.textSecondary,
                               ),
                             ),
                             onTap: () => widget.provider.selectPatient(p),
@@ -276,7 +295,7 @@ class _PatientDetailCard extends StatelessWidget {
               const CircleAvatar(
                 radius: 28,
                 backgroundColor: AppColors.accent,
-                child: Icon(Icons.person, size: 32, color: Colors.black),
+                child: Icon(Icons.person, size: 32, color: AppColors.onAccent),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -285,12 +304,16 @@ class _PatientDetailCard extends StatelessWidget {
                   children: [
                     Text(
                       patient.name,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Mã định danh bệnh án: ${patient.id}',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 13),
                     ),
                   ],
                 ),
@@ -302,28 +325,46 @@ class _PatientDetailCard extends StatelessWidget {
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
-              final double itemWidth = constraints.maxWidth > 600 ? (constraints.maxWidth - 48) / 5 : (constraints.maxWidth - 24) / 2;
+              final double itemWidth = constraints.maxWidth > 600
+                  ? (constraints.maxWidth - 48) / 5
+                  : (constraints.maxWidth - 24) / 2;
               return Wrap(
                 spacing: 12,
                 runSpacing: 16,
                 children: [
-                  SizedBox(width: itemWidth, child: _buildDetailItem('Tuổi', '${patient.age} tuổi')),
-                  SizedBox(width: itemWidth, child: _buildDetailItem('Chiều cao', '${patient.heightCm} cm')),
-                  SizedBox(width: itemWidth, child: _buildDetailItem('Cân nặng', '${patient.weightKg} kg')),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _buildDetailItem('Tuổi', '${patient.age} tuổi')),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _buildDetailItem(
+                          'Chiều cao', '${patient.heightCm} cm')),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _buildDetailItem(
+                          'Cân nặng', '${patient.weightKg} kg')),
                   SizedBox(
                     width: itemWidth,
                     child: _buildDetailItem(
                       'Chân lành sinh học',
-                      patient.healthyLeg == LegSide.left ? 'Chân Trái (L)' : 'Chân Phải (R)',
-                      color: patient.healthyLeg == LegSide.left ? AppColors.leftLeg : AppColors.rightLeg,
+                      patient.healthyLeg == LegSide.left
+                          ? 'Chân Trái (L)'
+                          : 'Chân Phải (R)',
+                      color: patient.healthyLeg == LegSide.left
+                          ? AppColors.leftLeg
+                          : AppColors.rightLeg,
                     ),
                   ),
                   SizedBox(
                     width: itemWidth,
                     child: _buildDetailItem(
                       'Chân giả lắp đặt',
-                      patient.prostheticLeg == LegSide.left ? 'Chân Trái (L)' : 'Chân Phải (R)',
-                      color: patient.prostheticLeg == LegSide.left ? AppColors.leftLeg : AppColors.rightLeg,
+                      patient.prostheticLeg == LegSide.left
+                          ? 'Chân Trái (L)'
+                          : 'Chân Phải (R)',
+                      color: patient.prostheticLeg == LegSide.left
+                          ? AppColors.leftLeg
+                          : AppColors.rightLeg,
                     ),
                   ),
                 ],
@@ -333,18 +374,32 @@ class _PatientDetailCard extends StatelessWidget {
           const SizedBox(height: 20),
           const Divider(),
           const SizedBox(height: 12),
-          const Text('Tiền sử bệnh lý & Chấn thương', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+          const Text('Tiền sử bệnh lý & Chấn thương',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           Text(
-            patient.injuryHistory.isNotEmpty ? patient.injuryHistory : 'Chưa có thông tin tiền sử bệnh lý.',
-            style: const TextStyle(fontSize: 14, color: Colors.white70, height: 1.4),
+            patient.injuryHistory.isNotEmpty
+                ? patient.injuryHistory
+                : 'Chưa có thông tin tiền sử bệnh lý.',
+            style: const TextStyle(
+                fontSize: 14, color: AppColors.textSecondary, height: 1.4),
           ),
           const SizedBox(height: 16),
-          const Text('Mục tiêu điều trị & Căn chỉnh van', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+          const Text('Mục tiêu điều trị & Căn chỉnh van',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           Text(
-            patient.treatmentGoals.isNotEmpty ? patient.treatmentGoals : 'Chưa có thông tin mục tiêu điều trị.',
-            style: const TextStyle(fontSize: 14, color: Colors.white70, height: 1.4),
+            patient.treatmentGoals.isNotEmpty
+                ? patient.treatmentGoals
+                : 'Chưa có thông tin mục tiêu điều trị.',
+            style: const TextStyle(
+                fontSize: 14, color: AppColors.textSecondary, height: 1.4),
           ),
         ],
       ),
@@ -355,14 +410,16 @@ class _PatientDetailCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        Text(label,
+            style:
+                const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
         const SizedBox(height: 4),
         Text(
           value,
           style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.bold,
-            color: color ?? Colors.white,
+            color: color ?? AppColors.textPrimary,
           ),
           overflow: TextOverflow.ellipsis,
         ),
@@ -396,7 +453,8 @@ class _ClinicalActionCardState extends State<_ClinicalActionCard> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: AppColors.accent,
-            content: Text('Khởi tạo phiên kiểm định mới thành công! Đang chuyển hướng...'),
+            content: Text(
+                'Khởi tạo phiên kiểm định mới thành công! Đang chuyển hướng...'),
           ),
         );
       }
@@ -409,12 +467,13 @@ class _ClinicalActionCardState extends State<_ClinicalActionCard> {
             title: const Text('Lỗi khởi tạo phiên'),
             content: Text(
               'Không thể kết nối API hoặc Server đang ngoại tuyến.\n\nChi tiết lỗi: $e\n\nVui lòng khởi chạy FastAPI server.',
-              style: const TextStyle(color: Colors.white70),
+              style: const TextStyle(color: AppColors.textSecondary),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('ĐÓNG', style: TextStyle(color: AppColors.accent)),
+                child: const Text('ĐÓNG',
+                    style: TextStyle(color: AppColors.accent)),
               ),
             ],
           ),
@@ -466,22 +525,27 @@ class _ClinicalActionCardState extends State<_ClinicalActionCard> {
               ? const CircularProgressIndicator()
               : FilledButton.icon(
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 16),
                     backgroundColor: AppColors.accent,
-                    foregroundColor: Colors.black,
+                    foregroundColor: AppColors.onAccent,
                   ),
-                  onPressed: widget.provider.isLoading ? null : () => _handleStartSession(context),
+                  onPressed: widget.provider.isLoading
+                      ? null
+                      : () => _handleStartSession(context),
                   icon: const Icon(Icons.rocket_launch, size: 20),
                   label: const Text(
                     'BẮT ĐẦU PHIÊN KHÁM MỚI',
-                    style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, letterSpacing: 0.8),
                   ),
                 ),
           if (hasOldSessions) ...[
             const SizedBox(height: 16),
             Text(
               'Bệnh nhân có ${widget.patient.sessions.length} phiên khám cũ trong lịch sử.',
-              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              style:
+                  const TextStyle(fontSize: 11, color: AppColors.textSecondary),
             ),
           ],
         ],
@@ -500,7 +564,7 @@ class AddPatientDialog extends StatefulWidget {
 
 class AddPatientDialogState extends State<AddPatientDialog> {
   final _formKey = GlobalKey<FormState>();
-  
+
   late final TextEditingController _nameController;
   late final TextEditingController _ageController;
   late final TextEditingController _heightController;
@@ -534,7 +598,7 @@ class AddPatientDialogState extends State<AddPatientDialog> {
     }
 
     setState(() => _isSubmitting = true);
-    
+
     final name = _nameController.text.trim();
     final age = int.parse(_ageController.text.trim());
     final height = double.parse(_heightController.text.trim());
@@ -550,7 +614,7 @@ class AddPatientDialogState extends State<AddPatientDialog> {
         _healthyLeg,
         _prostheticLeg,
       );
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Tạo hồ sơ bệnh án thành công!')),
@@ -566,12 +630,13 @@ class AddPatientDialogState extends State<AddPatientDialog> {
             title: const Text('Lỗi kết nối'),
             content: Text(
               'Không thể ghi nhận bệnh án lên Database.\n\nChi tiết lỗi: $e\n\nVui lòng kiểm tra kết nối với FastAPI server.',
-              style: const TextStyle(color: Colors.white70),
+              style: const TextStyle(color: AppColors.textSecondary),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('ĐÓNG', style: TextStyle(color: AppColors.accent)),
+                child: const Text('ĐÓNG',
+                    style: TextStyle(color: AppColors.accent)),
               ),
             ],
           ),
@@ -588,7 +653,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppColors.panel,
-      title: const Text('Thêm bệnh án mới', style: TextStyle(fontWeight: FontWeight.bold)),
+      title: const Text('Thêm bệnh án mới',
+          style: TextStyle(fontWeight: FontWeight.bold)),
       content: SizedBox(
         width: 450,
         child: SingleChildScrollView(
@@ -646,7 +712,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                           labelText: 'Chiều cao (cm) *',
                           hintText: 'VD: 172.5',
                         ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
                             return 'Yêu cầu nhập chiều cao';
@@ -668,7 +735,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                     labelText: 'Cân nặng (kg) *',
                     hintText: 'VD: 64.0',
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Yêu cầu nhập cân nặng';
@@ -683,25 +751,30 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 12),
-                
+
                 // Dropdown chân lành sinh học
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Chân lành sinh học:', style: TextStyle(fontSize: 13)),
+                    const Text('Chân lành sinh học:',
+                        style: TextStyle(fontSize: 13)),
                     DropdownButton<LegSide>(
                       value: _healthyLeg,
                       dropdownColor: AppColors.panel,
                       items: const [
-                        DropdownMenuItem(value: LegSide.left, child: Text('Trái (Left)')),
-                        DropdownMenuItem(value: LegSide.right, child: Text('Phải (Right)')),
+                        DropdownMenuItem(
+                            value: LegSide.left, child: Text('Trái (Left)')),
+                        DropdownMenuItem(
+                            value: LegSide.right, child: Text('Phải (Right)')),
                       ],
                       onChanged: (val) {
                         if (val != null) {
                           setState(() {
                             _healthyLeg = val;
                             // Đề xuất mặc định chân đối diện cho chân giả
-                            _prostheticLeg = val == LegSide.left ? LegSide.right : LegSide.left;
+                            _prostheticLeg = val == LegSide.left
+                                ? LegSide.right
+                                : LegSide.left;
                           });
                         }
                       },
@@ -714,13 +787,16 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Chân giả lắp đặt:', style: TextStyle(fontSize: 13)),
+                    const Text('Chân giả lắp đặt:',
+                        style: TextStyle(fontSize: 13)),
                     DropdownButton<LegSide>(
                       value: _prostheticLeg,
                       dropdownColor: AppColors.panel,
                       items: const [
-                        DropdownMenuItem(value: LegSide.left, child: Text('Trái (Left)')),
-                        DropdownMenuItem(value: LegSide.right, child: Text('Phải (Right)')),
+                        DropdownMenuItem(
+                            value: LegSide.left, child: Text('Trái (Left)')),
+                        DropdownMenuItem(
+                            value: LegSide.right, child: Text('Phải (Right)')),
                       ],
                       onChanged: (val) {
                         if (val != null) {
@@ -735,7 +811,10 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                 const SizedBox(height: 8),
                 const Text(
                   '* Mặc định chân giả lắp đặt ở phía đối diện chân lành. Trường hợp cụt cả hai chân hoặc đặc biệt khác, bạn có thể chỉnh thủ công chân giả giống chân lành.',
-                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -746,7 +825,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
       actions: [
         TextButton(
           onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('HỦY BỎ', style: TextStyle(color: AppColors.textSecondary)),
+          child: const Text('HỦY BỎ',
+              style: TextStyle(color: AppColors.textSecondary)),
         ),
         _isSubmitting
             ? const Padding(
@@ -760,7 +840,7 @@ class AddPatientDialogState extends State<AddPatientDialog> {
             : FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.black,
+                  foregroundColor: AppColors.onAccent,
                 ),
                 onPressed: () => _submitForm(context),
                 child: const Text('TẠO BỆNH ÁN'),

@@ -14,7 +14,8 @@ Widget createVideoStreamWidget(String url) {
         ..style.width = '100%'
         ..style.height = '100%'
         ..style.border = 'none'
-        ..style.objectFit = 'cover',
+        ..style.objectFit = 'contain'
+        ..style.backgroundColor = '#0b1220',
     );
   }
   return HtmlElementView(viewType: viewType);

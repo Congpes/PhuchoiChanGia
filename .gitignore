@@ -1,7 +1,9 @@
 # Python
 backend/venv/
+backend/.matplotlib/
 __pycache__/
 backend/*.db
+backend/recordings/
 
 # Flutter
 frontend_app/build/
@@ -14,3 +16,7 @@ frontend_app/.flutter-plugins-dependencies
 
 # Mac
 .DS_Store
+
+# Local review artifacts
+.codex_doc_review/
+.fsr_doc_media/

@@ -1,10 +1,43 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import 'fsr_region_analysis.dart';
 import 'metrics_grid.dart';
+
+class _ClipInfo {
+  const _ClipInfo({
+    required this.scanId,
+    required this.label,
+    required this.start,
+    required this.end,
+    required this.frontalUrl,
+    required this.sagittalUrl,
+  });
+
+  final String scanId;
+  final String label;
+  final double start;
+  final double end;
+  final String frontalUrl;
+  final String sagittalUrl;
+
+  factory _ClipInfo.fromJson(Map<String, dynamic> json) => _ClipInfo(
+        scanId: json['scanId']?.toString() ?? '',
+        label:
+            json['label']?.toString() ?? '\u0110o\u1ea1n ph\u00e2n t\u00edch',
+        start: (json['startOffsetSec'] as num?)?.toDouble() ?? 0,
+        end: (json['endOffsetSec'] as num?)?.toDouble() ?? 0,
+        frontalUrl: json['frontalVideoUrl']?.toString() ?? '',
+        sagittalUrl: json['sagittalVideoUrl']?.toString() ?? '',
+      );
+}
 
 class TabAnalysis extends StatefulWidget {
   const TabAnalysis({super.key});
@@ -14,32 +47,55 @@ class TabAnalysis extends StatefulWidget {
 }
 
 class _TabAnalysisState extends State<TabAnalysis> {
-  final _degreesController = TextEditingController();
-  final _notesController = TextEditingController();
+  List<_ClipInfo> _clips = [];
+  String? _selectedId;
+  String? _loadedSessionId;
+  bool _loading = false;
+  String? _error;
+  Timer? _playTimer;
+  double _position = 0;
+  bool _playing = false;
 
   @override
   void dispose() {
-    _degreesController.dispose();
-    _notesController.dispose();
+    _playTimer?.cancel();
     super.dispose();
   }
 
-  void _saveAdjustment(BuildContext context, SessionProvider provider) async {
-    final degrees = double.tryParse(_degreesController.text) ?? 0.0;
-    final notes = _notesController.text;
-
-    if (notes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng nhập mô tả căn chỉnh thực tế.')),
+  Future<void> _load(String sessionId) async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:8000/sessions/$sessionId/analysis-clips'),
       );
-      return;
-    }
-
-    await provider.saveActualAdjustment(degrees, notes);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã ghi nhận thông số căn chỉnh cơ khí thành công!')),
-      );
+      if (response.statusCode != 200) {
+        throw Exception('Backend tr\u1ea3 m\u00e3 ${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body) as List;
+      final clips = decoded
+          .whereType<Map<String, dynamic>>()
+          .map(_ClipInfo.fromJson)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _clips = clips;
+        _selectedId = clips.any((clip) => clip.scanId == _selectedId)
+            ? _selectedId
+            : (clips.isEmpty ? null : clips.first.scanId);
+        _loadedSessionId = sessionId;
+        if (clips.isNotEmpty) {
+          _position =
+              clips.firstWhere((clip) => clip.scanId == _selectedId).start;
+        }
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -48,371 +104,349 @@ class _TabAnalysisState extends State<TabAnalysis> {
     final provider = context.watch<SessionProvider>();
     final patient = provider.activePatient;
     final session = provider.activeSession;
-
     if (patient == null || session == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.person_search_outlined, size: 64, color: AppColors.textSecondary),
-            const SizedBox(height: 16),
-            const Text(
-              'Chưa có dữ liệu phân tích',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Vui lòng chọn bệnh nhân và bắt đầu phiên khám để thực hiện quét.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => provider.setTabIndex(0),
-              icon: const Icon(Icons.people_outline, color: Colors.black),
-              label: const Text(
-                'QUAY LẠI HỒ SƠ BỆNH NHÂN',
-                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ],
-        ),
-      );
+      return const Center(
+          child: Text(
+              'Ch\u01b0a ch\u1ecdn b\u1ec7nh nh\u00e2n ho\u1eb7c phi\u00ean \u0111o.'));
+    }
+    if (_loadedSessionId != session.id && !_loading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _load(session.id));
     }
 
-    // Check if we only have baseline
-    final hasOnlyBaseline = session.baseline != null && session.scans.isEmpty;
-    final activeScan = session.activeScan;
-
-    if (session.baseline == null && session.scans.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.analytics_outlined, size: 64, color: AppColors.textSecondary),
-            const SizedBox(height: 16),
-            const Text(
-              'Chưa có dữ liệu phân tích',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Vui lòng thực hiện quét Baseline hoặc đánh giá dáng đi ở Tab Quét để xem kết quả.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => provider.setTabIndex(2),
-              icon: const Icon(Icons.videocam_outlined, color: Colors.black),
-              label: const Text(
-                'QUAY LẠI TAB QUÉT',
-                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Prefill controllers if scan already has adjustment data saved
-    if (activeScan != null && activeScan.id != 'baseline') {
-      if (_notesController.text.isEmpty && activeScan.actualAdjustmentNotes.isNotEmpty) {
-        _notesController.text = activeScan.actualAdjustmentNotes;
-        _degreesController.text = activeScan.actualAdjustmentDegrees > 0
-            ? activeScan.actualAdjustmentDegrees.toStringAsFixed(0)
-            : '';
-      }
-    }
+    final selectedClip =
+        _clips.where((clip) => clip.scanId == _selectedId).firstOrNull;
+    final allScans = <ScanResult>[
+      if (session.baseline != null) session.baseline!,
+      ...session.scans,
+    ];
+    final selectedScan =
+        allScans.where((scan) => scan.id == selectedClip?.scanId).firstOrNull;
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Left Panel: Charts & Metrics Grid
         Expanded(
           child: Column(
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: const BoxDecoration(
-                  color: AppColors.panel,
-                  border: Border(bottom: BorderSide(color: AppColors.border)),
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: AppColors.accent, size: 20),
-                      onPressed: () => provider.setTabIndex(2),
-                      tooltip: 'Quay lại Quét & Ghi hình',
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      hasOnlyBaseline
-                          ? 'Đồ thị nhịp điệu sinh học chuẩn (Baseline)'
-                          : 'Đồ thị so sánh: Chân lành (Baseline) vs ${activeScan?.label ?? 'Chân giả'}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.accent),
-                    ),
-                  ],
-                ),
-              ),
+              _titleBar(provider, selectedClip),
+              if (selectedClip != null) _videoPair(session.id, selectedClip),
+              if (selectedClip != null) _playbackControls(selectedClip),
               Expanded(
-                child: MetricsGrid(
-                  scan: activeScan ?? session.baseline!,
-                  baseline: session.baseline,
-                  patient: patient,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Right Panel: Recommendations & Adjustment Logging Form
-        Container(
-          width: 340,
-          decoration: const BoxDecoration(
-            color: AppColors.sidebar,
-            border: Border(left: BorderSide(color: AppColors.border)),
-          ),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text(
-                'KẾT QUẢ PHÂN TÍCH',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.8),
-              ),
-              const SizedBox(height: 12),
-
-              // Baseline Loaded Info
-              if (hasOnlyBaseline) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.panel,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.check_circle, color: AppColors.accentGreen, size: 18),
-                          SizedBox(width: 8),
-                          Text('Đã nạp Baseline', style: TextStyle(fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Đã lưu thành công đồ thị chuẩn chân lành của bệnh nhân. Vui lòng chuyển sang Tab Quét và chọn "Đánh giá chân giả - Scan #1" để tiến hành đo lường.',
-                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                FilledButton.icon(
-                  onPressed: () => provider.setTabIndex(1), // go back to Tab 2
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('QUAY LẠI TAB QUÉT'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ] else ...[
-                // Card 1: AI Recommendations
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.panel,
-                    border: Border.all(color: AppColors.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '1. ĐỀ XUẤT TINH CHỈNH AI',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.accent, letterSpacing: 0.5),
-                      ),
-                      const SizedBox(height: 12),
-                      ...session.recommendations.map((r) => _buildRecommendationCard(r)),
-                      if (session.recommendations.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 6),
-                          child: Text(
-                            'Chưa phát hiện sai lệch nghiêm trọng. Dáng đi đạt độ đối xứng cao.',
-                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-
-                // Card 2: Mechanic Adjustment Logging (Only show if active scan is a prosthetic evaluation, not baseline)
-                if (activeScan != null && activeScan.id != 'baseline')
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: AppColors.panel,
-                      border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '2. GHI NHẬN CĂN CHỈNH CƠ KHÍ',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.accentGreen, letterSpacing: 0.5),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Nhập thông số khớp đã điều chỉnh thực tế ngoài đời để so sánh hiệu quả sau khi quét lại.',
-                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, height: 1.3),
-                        ),
-                        const SizedBox(height: 14),
-                        TextField(
-                          controller: _degreesController,
-                          decoration: const InputDecoration(
-                            labelText: 'Số độ tinh chỉnh thực tế (độ)',
-                            hintText: 'Ví dụ: 10',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _notesController,
-                          maxLines: 3,
-                          decoration: const InputDecoration(
-                            labelText: 'Mô tả chi tiết chỉnh sửa',
-                            hintText: 'Ví dụ: Nới lỏng phuộc gối thêm 10 độ...',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: provider.isLoading ? null : () => _saveAdjustment(context, provider),
-                            icon: const Icon(Icons.save_outlined, size: 18),
-                            label: const Text('LƯU THÔNG SỐ CĂN CHỈNH', style: TextStyle(fontWeight: FontWeight.bold)),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppColors.sidebar,
-                              foregroundColor: Colors.white,
-                              side: const BorderSide(color: AppColors.border),
+                child: selectedScan == null
+                    ? _emptyState()
+                    : DefaultTabController(
+                        length: 2,
+                        child: Column(
+                          children: [
+                            Container(
+                              height: 38,
+                              color: AppColors.panel,
+                              child: const TabBar(
+                                tabs: [
+                                  Tab(
+                                      text:
+                                          'CH\u1ec8 S\u1ed0 D\u00c1NG \u0110I'),
+                                  Tab(
+                                      text:
+                                          'FSR \u00b7 3 V\u00d9NG B\u00c0N CH\u00c2N'),
+                                ],
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Card 3: Action Controls
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.panel,
-                    border: Border.all(color: AppColors.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '3. HÀNH ĐỘNG TIẾP THEO',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.5),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: () {
-                            _degreesController.clear();
-                            _notesController.clear();
-                            provider.startRescan();
-                          },
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('QUÉT LẠI CHÂN GIẢ (RESCAN)', style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.accent,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
+                            Expanded(
+                              child: TabBarView(
+                                children: [
+                                  MetricsGrid(
+                                    scan: selectedScan,
+                                    baseline: session.baseline,
+                                    patient: patient,
+                                  ),
+                                  FsrRegionAnalysis(scanId: selectedScan.id),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () => provider.setTabIndex(3), // go to history
-                          icon: const Icon(Icons.history, size: 18),
-                          label: const Text('XEM LỊCH SỬ & BÁO CÁO'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.textSecondary,
-                            side: const BorderSide(color: AppColors.border),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ],
           ),
         ),
+        _clipList(session),
       ],
     );
   }
 
-  Widget _buildRecommendationCard(AdjustmentRecommendation r) {
-    final color = switch (r.severity) {
-      RecommendationSeverity.critical => AppColors.critical,
-      RecommendationSeverity.warning => AppColors.warning,
-      RecommendationSeverity.info => AppColors.accent,
-    };
-
+  Widget _titleBar(SessionProvider provider, _ClipInfo? clip) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-        borderRadius: BorderRadius.circular(6),
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: AppColors.panel,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => provider.setTabIndex(2),
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'V\u1ec1 m\u00e0n Scan',
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            'PH\u00c2N T\u00cdCH \u0110O\u1ea0N D\u00c1NG \u0110I',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          if (clip != null) ...[
+            const SizedBox(width: 12),
+            Text(
+              '${clip.start.toStringAsFixed(1)}\u2013${clip.end.toStringAsFixed(1)} s',
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _selectClip(_ClipInfo clip) {
+    _playTimer?.cancel();
+    setState(() {
+      _selectedId = clip.scanId;
+      _position = clip.start;
+      _playing = false;
+    });
+  }
+
+  void _togglePlayback(_ClipInfo clip) {
+    if (_playing) {
+      _playTimer?.cancel();
+      setState(() => _playing = false);
+      return;
+    }
+    if (_position >= clip.end) _position = clip.start;
+    setState(() => _playing = true);
+    _playTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      if (!mounted || _position + 0.2 >= clip.end) {
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _position = clip.end;
+            _playing = false;
+          });
+        }
+        return;
+      }
+      setState(() => _position += 0.2);
+    });
+  }
+
+  Widget _playbackControls(_ClipInfo clip) {
+    final value = _position.clamp(clip.start, clip.end);
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: AppColors.sidebar,
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => _togglePlayback(clip),
+            icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
+            tooltip: _playing ? 'Pause' : 'Play',
+          ),
+          SizedBox(
+            width: 62,
+            child: Text(
+              '${value.toStringAsFixed(1)} s',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          ),
+          Expanded(
+            child: Slider(
+              min: clip.start,
+              max: clip.end,
+              value: value,
+              onChanged: (next) {
+                _playTimer?.cancel();
+                setState(() {
+                  _position = next;
+                  _playing = false;
+                });
+              },
+            ),
+          ),
+          Text(
+            '${clip.end.toStringAsFixed(1)} s',
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _videoPair(String sessionId, _ClipInfo clip) {
+    return SizedBox(
+      height: 220,
+      child: Row(
+        children: [
+          Expanded(
+            child: _recordedVideo(
+              'CAM 1 \u00b7 CH\u00cdNH DI\u1ec6N',
+              clip.frontalUrl,
+            ),
+          ),
+          Expanded(
+            child: _recordedVideo(
+              'CAM 2 \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC',
+              clip.sagittalUrl,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recordedVideo(String label, String relativeUrl) {
+    final framePath = relativeUrl.split('?').first.replaceFirst(
+          '/session-video/',
+          '/session-video-frame/',
+        );
+    final url =
+        'http://localhost:8000$framePath?t=${_position.toStringAsFixed(2)}';
+    return Container(
+      margin: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: relativeUrl.isEmpty
+                ? const Center(child: Text('Kh\u00f4ng c\u00f3 video'))
+                : Image.network(
+                    url,
+                    key: ValueKey(url),
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                  ),
+          ),
+          Positioned(
+            left: 8,
+            top: 8,
+            child: Container(
+              color: const Color(0xD9FFFFFF),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              child: Text(
+                label,
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _clipList(GaitSession session) {
+    return Container(
+      width: 290,
+      color: AppColors.sidebar,
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            r.issue,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
-          ),
-          const SizedBox(height: 4),
-          Text(r.suggestion, style: const TextStyle(fontSize: 11, color: Colors.white)),
-          if (r.deltaDegrees > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                'Δ sai lệch: ${r.deltaDegrees.toStringAsFixed(0)}°',
-                style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '\u0110O\u1ea0N \u0110\u00c3 C\u1eaeT',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                ),
               ),
+              IconButton(
+                onPressed: _loading ? null : () => _load(session.id),
+                icon: const Icon(Icons.refresh, size: 18),
+                tooltip: 'N\u1ea1p l\u1ea1i danh s\u00e1ch',
+              ),
+            ],
+          ),
+          const Text(
+            'Ch\u1ecdn m\u1ed9t \u0111o\u1ea1n \u0111\u1ec3 \u0111\u1ed3ng b\u1ed9 video v\u00e0 bi\u1ec3u \u0111\u1ed3.',
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          if (_error != null)
+            Text(
+              _error!,
+              style: const TextStyle(fontSize: 11, color: AppColors.critical),
             ),
+          Expanded(
+            child: _clips.isEmpty && !_loading
+                ? const Center(
+                    child: Text(
+                      'Ch\u01b0a c\u00f3 \u0111o\u1ea1n ph\u00e2n t\u00edch.\nV\u1ec1 tab Scan \u0111\u1ec3 \u0111\u1eb7t m\u1ed1c \u0111\u1ea7u v\u00e0 m\u1ed1c cu\u1ed1i.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: _clips.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final clip = _clips[index];
+                      final selected = clip.scanId == _selectedId;
+                      return ListTile(
+                        selected: selected,
+                        selectedTileColor:
+                            AppColors.accent.withValues(alpha: 0.09),
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 8),
+                        title: Text(
+                          clip.label,
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '${clip.start.toStringAsFixed(1)}\u2013${clip.end.toStringAsFixed(1)} s'
+                          ' \u00b7 ${(clip.end - clip.start).toStringAsFixed(1)} s',
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        trailing: selected
+                            ? const Icon(Icons.play_arrow,
+                                color: AppColors.accent)
+                            : null,
+                        onTap: () => _selectClip(clip),
+                      );
+                    },
+                  ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Text(
+        _loading
+            ? '\u0110ang n\u1ea1p d\u1eef li\u1ec7u \u0111o\u1ea1n...'
+            : 'Ch\u1ecdn m\u1ed9t \u0111o\u1ea1n \u1edf danh s\u00e1ch b\u00ean ph\u1ea3i \u0111\u1ec3 xem k\u1ebft qu\u1ea3.',
+        style: const TextStyle(color: AppColors.textSecondary),
       ),
     );
   }

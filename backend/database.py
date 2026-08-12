@@ -6,27 +6,20 @@ import json
 DB_FILE = os.path.join(os.path.dirname(__file__), "gait_analysis.db")
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     return conn
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    """Create any missing database objects without deleting existing data."""
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON;")
-    
-    
-    cursor.execute("DROP TABLE IF EXISTS clinical_notes;")
-    cursor.execute("DROP TABLE IF EXISTS practice_attempts;")
-    cursor.execute("DROP TABLE IF EXISTS exercises;")
-    cursor.execute("DROP TABLE IF EXISTS scans;")
-    cursor.execute("DROP TABLE IF EXISTS segments;")
-    cursor.execute("DROP TABLE IF EXISTS sessions;")
-    cursor.execute("DROP TABLE IF EXISTS patients;")
     
     # Create Patients Table
     cursor.execute("""
-    CREATE TABLE patients (
+    CREATE TABLE IF NOT EXISTS patients (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         age INTEGER CHECK (age > 0 AND age <= 120),
@@ -41,7 +34,7 @@ def init_db():
     
     # Create Sessions Table
     cursor.execute("""
-    CREATE TABLE sessions (
+    CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         patient_id TEXT,
         created_at TEXT NOT NULL,
@@ -52,7 +45,7 @@ def init_db():
     
     # Create Segments Table
     cursor.execute("""
-    CREATE TABLE segments (
+    CREATE TABLE IF NOT EXISTS segments (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         start_offset_sec REAL NOT NULL,
@@ -67,7 +60,7 @@ def init_db():
     
     # Create Scans Table
     cursor.execute("""
-    CREATE TABLE scans (
+    CREATE TABLE IF NOT EXISTS scans (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         segment_id TEXT,
@@ -96,7 +89,7 @@ def init_db():
     
     # Create Clinical Notes Table
     cursor.execute("""
-    CREATE TABLE clinical_notes (
+    CREATE TABLE IF NOT EXISTS clinical_notes (
         id TEXT PRIMARY KEY,
         patient_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -112,7 +105,7 @@ def init_db():
     
     # Create Exercises Table
     cursor.execute("""
-    CREATE TABLE exercises (
+    CREATE TABLE IF NOT EXISTS exercises (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         evaluation_method TEXT CHECK(evaluation_method IN ('joint_curve_dtw', 'load_symmetry', 'cop_trajectory')) NOT NULL,
@@ -130,7 +123,7 @@ def init_db():
     
     # Create Practice Attempts Table
     cursor.execute("""
-    CREATE TABLE practice_attempts (
+    CREATE TABLE IF NOT EXISTS practice_attempts (
         id TEXT PRIMARY KEY,
         patient_id TEXT NOT NULL,
         exercise_id TEXT NOT NULL,
@@ -149,12 +142,27 @@ def init_db():
     );
     """)
     
+    # Keep schema changes explicit and traceable. Future migrations should bump
+    # this value after applying their ALTER/CREATE statements transactionally.
+    cursor.execute("PRAGMA user_version = 1;")
+
+    # Index foreign keys and common history lookups. SQLite does not create
+    # indexes automatically for child-key columns.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_patient ON sessions(patient_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_session ON scans(session_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_segment ON scans(segment_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_patient ON clinical_notes(patient_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_session ON clinical_notes(session_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempts_patient ON practice_attempts(patient_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempts_exercise ON practice_attempts(exercise_id);")
+
     conn.commit()
     conn.close()
 
 def populate_demo_data():
     """Optional local demo fixture. Production startup never calls this function."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM patients")
     count = cursor.fetchone()[0]

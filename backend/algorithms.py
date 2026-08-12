@@ -3,8 +3,7 @@ from scipy.signal import butter, filtfilt
 from scipy.interpolate import CubicSpline
 import math
 import json
-import sqlite3
-from database import DB_FILE
+from database import get_db_connection
 
 def calculate_angle(a, b, c):
     """Tính góc giữa 3 điểm: Hông (a), Đầu gối (b - đỉnh góc), Mắt cá (c)"""
@@ -177,7 +176,7 @@ def analyze_cropped_segment(
     if cadence < 40 or cadence > 160:
         cadence = None
         
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT height_cm FROM patients WHERE id = (SELECT patient_id FROM sessions WHERE id = ?)", (active_session_id,))
     res = cursor.fetchone()

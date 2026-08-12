@@ -20,7 +20,7 @@ class AiProGaitApp extends StatelessWidget {
       child: MaterialApp(
         title: 'AI-ProGait',
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.dark,
+        theme: AppTheme.scientific,
         home: const AnalysisDashboard(),
       ),
     );
