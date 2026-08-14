@@ -47,8 +47,6 @@ class MetricsGrid extends StatelessWidget {
     GaitCycleCurve? baselineHipRight;
     GaitCycleCurve? baselineKneeLeft;
     GaitCycleCurve? baselineKneeRight;
-    GaitCycleCurve? baselineAnkleLeft;
-    GaitCycleCurve? baselineAnkleRight;
     GaitCycleCurve? baselinePelvic;
 
     if (baseline != null && patient != null) {
@@ -57,8 +55,6 @@ class MetricsGrid extends StatelessWidget {
       baselineHipRight = !isLeftHealthy ? baseline!.rightHip : null;
       baselineKneeLeft = isLeftHealthy ? baseline!.leftKnee : null;
       baselineKneeRight = !isLeftHealthy ? baseline!.rightKnee : null;
-      baselineAnkleLeft = isLeftHealthy ? baseline!.leftAnkle : null;
-      baselineAnkleRight = !isLeftHealthy ? baseline!.rightAnkle : null;
       baselinePelvic = baseline!.pelvicTilt;
     }
 
@@ -187,44 +183,6 @@ class MetricsGrid extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-
-                    // Section 3: Ankle joint angles
-                    const Divider(color: AppColors.border),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Góc Cổ Chân (Ankle Dorsiflexion/Plantarflexion)',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 180,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Cổ chân trái (L)',
-                              yAxisLabel: 'Góc cổ chân (°)',
-                              primaryCurve: scan.leftAnkle,
-                              secondaryCurve: baselineAnkleLeft,
-                              lineColor: AppColors.leftLeg,
-                            ),
-                          ),
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Cổ chân phải (R)',
-                              yAxisLabel: 'Góc cổ chân (°)',
-                              primaryCurve: scan.rightAnkle,
-                              secondaryCurve: baselineAnkleRight,
-                              lineColor: AppColors.rightLeg,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
 
                     // Section 4: Plantar pressure COP and Inverse Dynamics Socket moment (Restored UI templates)
                     const Divider(color: AppColors.border),

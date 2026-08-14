@@ -9,6 +9,7 @@ import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import 'fsr_region_analysis.dart';
+import 'gait_cycle_analysis.dart';
 import 'metrics_grid.dart';
 
 class _ClipInfo {
@@ -50,6 +51,7 @@ class _TabAnalysisState extends State<TabAnalysis> {
   List<_ClipInfo> _clips = [];
   String? _selectedId;
   String? _loadedSessionId;
+  int? _loadedScanCount;
   bool _loading = false;
   String? _error;
   Timer? _playTimer;
@@ -87,6 +89,8 @@ class _TabAnalysisState extends State<TabAnalysis> {
             ? _selectedId
             : (clips.isEmpty ? null : clips.first.scanId);
         _loadedSessionId = sessionId;
+        _loadedScanCount =
+            context.read<SessionProvider>().activeSession?.scans.length;
         if (clips.isNotEmpty) {
           _position =
               clips.firstWhere((clip) => clip.scanId == _selectedId).start;
@@ -109,7 +113,9 @@ class _TabAnalysisState extends State<TabAnalysis> {
           child: Text(
               'Ch\u01b0a ch\u1ecdn b\u1ec7nh nh\u00e2n ho\u1eb7c phi\u00ean \u0111o.'));
     }
-    if (_loadedSessionId != session.id && !_loading) {
+    if ((_loadedSessionId != session.id ||
+            _loadedScanCount != session.scans.length) &&
+        !_loading) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load(session.id));
     }
 
@@ -134,7 +140,7 @@ class _TabAnalysisState extends State<TabAnalysis> {
                 child: selectedScan == null
                     ? _emptyState()
                     : DefaultTabController(
-                        length: 2,
+                        length: 3,
                         child: Column(
                           children: [
                             Container(
@@ -148,6 +154,7 @@ class _TabAnalysisState extends State<TabAnalysis> {
                                   Tab(
                                       text:
                                           'FSR \u00b7 3 V\u00d9NG B\u00c0N CH\u00c2N'),
+                                  Tab(text: 'CHU KỲ CAMERA'),
                                 ],
                               ),
                             ),
@@ -160,6 +167,7 @@ class _TabAnalysisState extends State<TabAnalysis> {
                                     patient: patient,
                                   ),
                                   FsrRegionAnalysis(scanId: selectedScan.id),
+                                  GaitCycleAnalysis(scanId: selectedScan.id),
                                 ],
                               ),
                             ),

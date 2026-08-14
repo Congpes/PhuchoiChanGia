@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -25,15 +26,24 @@ class _TabScanState extends State<TabScan> {
   bool _chartsExpanded = true;
   bool? _camera0Connected;
   bool? _camera1Connected;
+  bool? _camera1PoseDetected;
+  bool _camerasSwapped = false;
+  bool _swappingCameras = false;
   Timer? _cameraTimer;
   double? _pendingStart;
   final List<AnalysisSegment> _segments = [];
+  String? _loadedSegmentSessionId;
+  bool _loadingSegments = false;
   final Set<RealtimeChartType> _selectedCharts = {};
 
   @override
   void initState() {
     super.initState();
     _pollCameraStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<SessionProvider>().syncRecordingStatus();
+    });
     _cameraTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => _pollCameraStatus(),
@@ -56,14 +66,50 @@ class _TabScanState extends State<TabScan> {
       setState(() {
         _camera0Connected = body['camera0']?['connected'] == true;
         _camera1Connected = body['camera1']?['connected'] == true;
+        _camera1PoseDetected = body['camera1']?['poseDetected'] == true;
+        _camerasSwapped = body['swapped'] == true;
       });
     } catch (_) {
       if (mounted) {
         setState(() {
           _camera0Connected = false;
           _camera1Connected = false;
+          _camera1PoseDetected = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadSegments(String sessionId, {bool force = false}) async {
+    if (_loadingSegments || (!force && _loadedSegmentSessionId == sessionId)) {
+      return;
+    }
+    _loadingSegments = true;
+    try {
+      final response = await http
+          .get(Uri.parse(
+              'http://127.0.0.1:8000/sessions/$sessionId/analysis-clips'))
+          .timeout(const Duration(seconds: 3));
+      if (response.statusCode != 200) return;
+      final decoded = jsonDecode(response.body) as List;
+      final segments = decoded.whereType<Map<String, dynamic>>().map((item) {
+        return AnalysisSegment(
+          start: (item['startOffsetSec'] as num?)?.toDouble() ?? 0,
+          end: (item['endOffsetSec'] as num?)?.toDouble() ?? 0,
+          label: item['label']?.toString() ?? 'Đoạn phân tích',
+        );
+      }).toList();
+      if (!mounted) return;
+      setState(() {
+        _segments
+          ..clear()
+          ..addAll(segments);
+        _loadedSegmentSessionId = sessionId;
+      });
+    } catch (_) {
+      // Keep the last visible list during a brief backend interruption.
+    } finally {
+      _loadingSegments = false;
     }
   }
 
@@ -76,6 +122,34 @@ class _TabScanState extends State<TabScan> {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  Future<void> _swapCameras(GaitSession session) async {
+    if (session.isRecording || _swappingCameras) return;
+    setState(() => _swappingCameras = true);
+    try {
+      final response = await http
+          .post(Uri.parse('http://127.0.0.1:8000/camera/swap'))
+          .timeout(const Duration(seconds: 3));
+      if (response.statusCode != 200) {
+        _message('Không thể đảo camera: ${response.body}', error: true);
+        return;
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (mounted) {
+        setState(() => _camerasSwapped = body['swapped'] == true);
+      }
+      await _pollCameraStatus();
+      _message(
+        _camerasSwapped
+            ? 'Đã đổi: camera vật lý 2 là chính diện, camera vật lý 1 là mặt phẳng dọc.'
+            : 'Đã trả camera về cấu hình ban đầu.',
+      );
+    } catch (_) {
+      _message('Backend chưa phản hồi nên chưa thể đảo camera.', error: true);
+    } finally {
+      if (mounted) setState(() => _swappingCameras = false);
+    }
   }
 
   String _clock(double seconds) {
@@ -151,12 +225,8 @@ class _TabScanState extends State<TabScan> {
       offset: now,
       note: 'M\u1ed1c cu\u1ed1i $label',
     );
-    setState(() {
-      _segments.add(
-        AnalysisSegment(start: start, end: now, label: label),
-      );
-      _pendingStart = null;
-    });
+    await _loadSegments(session.id, force: true);
+    if (mounted) setState(() => _pendingStart = null);
     _message(
       '\u0110\u00e3 l\u01b0u $label '
       '(${start.toStringAsFixed(1)}\u2013${now.toStringAsFixed(1)} gi\u00e2y).',
@@ -173,6 +243,12 @@ class _TabScanState extends State<TabScan> {
       return _empty(provider);
     }
 
+    if (_loadedSegmentSessionId != session.id && !_loadingSegments) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadSegments(session.id);
+      });
+    }
+
     return ColoredBox(
       color: AppColors.background,
       child: Column(
@@ -184,14 +260,12 @@ class _TabScanState extends State<TabScan> {
                 Positioned.fill(
                   child: Column(
                     children: [
-                      _workspaceToolbar(),
+                      _workspaceToolbar(session),
                       Expanded(
-                        flex: 5,
-                        child: _cameraWorkspace(session),
-                      ),
-                      Expanded(
-                        flex: 5,
-                        child: _chartWorkspace(),
+                        child: _analysisWorkspace(
+                          patient: patient,
+                          session: session,
+                        ),
                       ),
                       RecordingTimeline(
                         duration: session.recordingElapsedSec,
@@ -358,7 +432,7 @@ class _TabScanState extends State<TabScan> {
     );
   }
 
-  Widget _workspaceToolbar() {
+  Widget _workspaceToolbar(GaitSession session) {
     return SizedBox(
       height: 34,
       child: Row(
@@ -379,6 +453,28 @@ class _TabScanState extends State<TabScan> {
             ),
           ),
           const Spacer(),
+          OutlinedButton.icon(
+            onPressed: session.isRecording || _swappingCameras
+                ? null
+                : () => _swapCameras(session),
+            icon: _swappingCameras
+                ? const SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(strokeWidth: 1.7),
+                  )
+                : const Icon(Icons.swap_horiz, size: 16),
+            label: Text(_camerasSwapped ? 'TRẢ LẠI CAM' : 'ĐẢO CAM 1 ↔ 2'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 28),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              textStyle: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
           if (_selectedCharts.isNotEmpty)
             Text(
               '${_selectedCharts.length} bi\u1ec3u \u0111\u1ed3 \u0111ang hi\u1ec3n th\u1ecb',
@@ -393,9 +489,49 @@ class _TabScanState extends State<TabScan> {
     );
   }
 
-  Widget _cameraWorkspace(GaitSession session) {
+  Widget _analysisWorkspace({
+    required Patient patient,
+    required GaitSession session,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (_selectedCharts.isEmpty) {
+          return _cameraWorkspace(session);
+        }
+
+        final availableWidth = max(0.0, constraints.maxWidth - 24);
+        final preferredChartWidth = availableWidth * 0.46;
+        final chartWidth = availableWidth < 1220
+            ? preferredChartWidth
+            : preferredChartWidth.clamp(560.0, 860.0).toDouble();
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _cameraWorkspace(
+                session,
+                padding: const EdgeInsets.fromLTRB(12, 0, 5, 7),
+              ),
+            ),
+            SizedBox(
+              width: chartWidth,
+              child: _chartWorkspace(
+                patient,
+                margin: const EdgeInsets.fromLTRB(5, 0, 12, 7),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _cameraWorkspace(
+    GaitSession session, {
+    EdgeInsetsGeometry padding = const EdgeInsets.fromLTRB(12, 0, 12, 7),
+  }) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+      padding: padding,
       child: Row(
         children: [
           Expanded(
@@ -412,6 +548,7 @@ class _TabScanState extends State<TabScan> {
               title: 'CAM 2 \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC',
               url: 'http://127.0.0.1:8000/video_feed_1',
               connected: _camera1Connected,
+              poseDetected: _camera1PoseDetected,
               session: session,
             ),
           ),
@@ -424,17 +561,23 @@ class _TabScanState extends State<TabScan> {
     required String title,
     required String url,
     required bool? connected,
+    bool? poseDetected,
     required GaitSession session,
   }) {
+    final poseMissing = connected == true && poseDetected == false;
     final stateText = connected == null
         ? '\u0110ang k\u1ebft n\u1ed1i'
         : connected
-            ? '\u0110ang ho\u1ea1t \u0111\u1ed9ng'
+            ? poseMissing
+                ? 'Ch\u01b0a th\u1ea5y to\u00e0n th\u00e2n'
+                : '\u0110ang ho\u1ea1t \u0111\u1ed9ng'
             : 'M\u1ea5t t\u00edn hi\u1ec7u';
     final stateColor = connected == null
         ? AppColors.warning
         : connected
-            ? AppColors.accentGreen
+            ? poseMissing
+                ? AppColors.warning
+                : AppColors.accentGreen
             : AppColors.critical;
 
     return Container(
@@ -540,9 +683,12 @@ class _TabScanState extends State<TabScan> {
     );
   }
 
-  Widget _chartWorkspace() {
+  Widget _chartWorkspace(
+    Patient patient, {
+    EdgeInsetsGeometry margin = const EdgeInsets.fromLTRB(12, 0, 12, 7),
+  }) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+      margin: margin,
       decoration: BoxDecoration(
         color: AppColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
@@ -575,6 +721,7 @@ class _TabScanState extends State<TabScan> {
           Expanded(
             child: RealtimeChartWorkspace(
               selectedCharts: _selectedCharts,
+              healthySide: patient.healthyLeg.name,
             ),
           ),
         ],

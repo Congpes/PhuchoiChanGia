@@ -8,8 +8,8 @@ class AppColors {
   static const border = Color(0xFFC7CFD8);
   static const accent = Color(0xFF245A8D);
   static const accentGreen = Color(0xFF356F63);
-  static const leftLeg = Color(0xFFA94442);
-  static const rightLeg = Color(0xFF245A8D);
+  static const leftLeg = Color(0xFF175CD3);
+  static const rightLeg = Color(0xFFD92D20);
   static const baseline = Color(0xFF6B7683);
   static const warning = Color(0xFFA56B24);
   static const critical = Color(0xFFA33A3A);

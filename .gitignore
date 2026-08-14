@@ -20,3 +20,17 @@ frontend_app/.flutter-plugins-dependencies
 # Local review artifacts
 .codex_doc_review/
 .fsr_doc_media/
+
+# Generated document/render scratch files
+.docx_*/
+.lo_*/
+.review_*
+docx_qa_*/
+docx_review_*/
+docx_work/
+*.tmp
+~$*.docx
+
+# Local Word documents
+*.docx
+*.bat

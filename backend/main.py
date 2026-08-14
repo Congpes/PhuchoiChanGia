@@ -6,6 +6,7 @@ import time
 import threading
 import json
 import uuid
+from collections import deque
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,9 @@ CAMERA_FRONTAL_INDEX = int(os.getenv("CAMERA_FRONTAL_INDEX", "0"))
 CAMERA_SAGITTAL_INDEX = int(os.getenv("CAMERA_SAGITTAL_INDEX", "1"))
 CAMERA_BACKEND = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
 
+CAMERA_RETRY_SECONDS = float(os.getenv('CAMERA_RETRY_SECONDS', '2.0'))
+CAMERA_READ_FAILURE_LIMIT = int(os.getenv('CAMERA_READ_FAILURE_LIMIT', '30'))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,8 +50,21 @@ init_db()
 # Global frames and locks for 2 camera streams
 latest_frame_0 = None
 latest_frame_1 = None
+latest_frame_0_at = 0.0
+latest_frame_1_at = 0.0
+latest_pose_0_at = 0.0
+latest_pose_1_at = 0.0
+latest_sagittal_pose_at = 0.0
 frame_lock_0 = threading.Lock()
 frame_lock_1 = threading.Lock()
+camera_roles_lock = threading.Lock()
+camera_roles_swapped = False
+
+# A rolling sagittal-pose buffer supports realtime gait charts even when a
+# recording has not been started. Timestamps are Unix seconds so they share the
+# same clock as live FSR packets.
+live_gait_samples = deque(maxlen=3600)
+live_gait_lock = threading.Lock()
 
 running = True
 is_recording = False
@@ -66,6 +83,7 @@ recorded_right_knee = []
 recorded_left_ankle = []
 recorded_right_ankle = []
 recorded_pelvic_tilt = []
+recorded_trunk_tilt = []
 recorded_left_hip = []
 recorded_right_hip = []
 session_markers = []
@@ -89,21 +107,136 @@ def draw_overlay_text(frame, text, pos, color=(255, 255, 255), scale=0.7, thickn
     cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
     cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv2.LINE_AA)
 
+def normalize_axial_angle(angle):
+    """Wrap an unoriented body-axis angle to the clinically useful ±90°."""
+    angle = float(angle)
+    if angle > 90.0:
+        angle -= 180.0
+    elif angle < -90.0:
+        angle += 180.0
+    return angle
+
+def pose_sample_from_landmarks(landmarks, width, height):
+    """Calculate the gait metrics needed by the logical sagittal camera."""
+    lm = landmarks.landmark
+    def point(name):
+        item = lm[name.value]
+        return [item.x * width, item.y * height]
+
+    r_shoulder = point(mp_pose.PoseLandmark.RIGHT_SHOULDER)
+    r_hip = point(mp_pose.PoseLandmark.RIGHT_HIP)
+    r_knee = point(mp_pose.PoseLandmark.RIGHT_KNEE)
+    r_ankle = point(mp_pose.PoseLandmark.RIGHT_ANKLE)
+    r_heel = point(mp_pose.PoseLandmark.RIGHT_HEEL)
+    l_shoulder = point(mp_pose.PoseLandmark.LEFT_SHOULDER)
+    l_hip = point(mp_pose.PoseLandmark.LEFT_HIP)
+    l_knee = point(mp_pose.PoseLandmark.LEFT_KNEE)
+    l_ankle = point(mp_pose.PoseLandmark.LEFT_ANKLE)
+    l_heel = point(mp_pose.PoseLandmark.LEFT_HEEL)
+
+    sample = {
+        "right_hip": calculate_angle(r_shoulder, r_hip, r_knee),
+        "right_knee": calculate_angle(r_hip, r_knee, r_ankle),
+        "right_ankle": calculate_angle(r_knee, r_ankle, r_heel),
+        "left_hip": calculate_angle(l_shoulder, l_hip, l_knee),
+        "left_knee": calculate_angle(l_hip, l_knee, l_ankle),
+        "left_ankle": calculate_angle(l_knee, l_ankle, l_heel),
+    }
+    sample["pelvic_tilt"] = math.degrees(math.atan2(
+        l_hip[1] - r_hip[1], l_hip[0] - r_hip[0]
+    ))
+    mid_shoulder = [(l_shoulder[0] + r_shoulder[0]) / 2,
+                    (l_shoulder[1] + r_shoulder[1]) / 2]
+    mid_hip = [(l_hip[0] + r_hip[0]) / 2,
+               (l_hip[1] + r_hip[1]) / 2]
+    sample["trunk_tilt"] = normalize_axial_angle(math.degrees(math.atan2(
+        mid_shoulder[0] - mid_hip[0], mid_hip[1] - mid_shoulder[1]
+    )))
+    values = tuple(sample.values())
+    return sample if all(value > 0 for value in values[:6]) and all(
+        math.isfinite(float(value)) for value in values
+    ) else None
+
+def store_sagittal_sample(sample, frame_at):
+    """Store live and optional recording data from the active sagittal source."""
+    global is_recording, latest_sagittal_pose_at
+    with live_gait_lock:
+        live_gait_samples.append({"time": frame_at, **sample})
+    latest_sagittal_pose_at = frame_at
+    if not is_recording:
+        return
+    elapsed = frame_at - record_start_time
+    if elapsed > record_duration:
+        is_recording = False
+        save_recorded_data_to_db()
+        return
+    recorded_timestamps.append(elapsed)
+    recorded_left_knee.append(sample["left_knee"])
+    recorded_right_knee.append(sample["right_knee"])
+    recorded_left_ankle.append(sample["left_ankle"])
+    recorded_right_ankle.append(sample["right_ankle"])
+    recorded_pelvic_tilt.append(sample["pelvic_tilt"])
+    recorded_trunk_tilt.append(sample["trunk_tilt"])
+    recorded_left_hip.append(sample["left_hip"])
+    recorded_right_hip.append(sample["right_hip"])
+
+def open_camera(camera_index, label):
+    backends = [CAMERA_BACKEND]
+    if CAMERA_BACKEND != cv2.CAP_ANY:
+        backends.append(cv2.CAP_ANY)
+    for backend in backends:
+        capture = cv2.VideoCapture(camera_index, backend)
+        if capture.isOpened():
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            backend_name = 'default' if backend == cv2.CAP_ANY else 'DirectShow'
+            print(f'[{label}] Opened device index {camera_index} with {backend_name} backend.')
+            return capture
+        capture.release()
+    return None
+
+def wait_for_camera(camera_index, label):
+    next_log_at = 0.0
+    while running:
+        capture = open_camera(camera_index, label)
+        if capture is not None:
+            return capture
+        now = time.time()
+        if now >= next_log_at:
+            print(f'[{label}] Cannot open device index {camera_index}; retrying.')
+            next_log_at = now + 10.0
+        time.sleep(CAMERA_RETRY_SECONDS)
+    return None
+
 def camera_loop_0():
     """Camera index 0: Frontal view"""
-    global latest_frame_0, running
+    global latest_frame_0, latest_frame_0_at, latest_pose_0_at, running
     pose = create_pose_detector()
-    cap = cv2.VideoCapture(CAMERA_FRONTAL_INDEX, CAMERA_BACKEND)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap = wait_for_camera(CAMERA_FRONTAL_INDEX, 'Camera 0 / frontal')
+    if cap is None:
+        print(f'[Camera 0] Cannot open device index {CAMERA_FRONTAL_INDEX}.')
+        pose.close()
+        return
+    read_failures = 0
     
     print("[Camera 0] Frontal thread started.")
     
     while running:
         success, frame = cap.read()
         if not success:
+            read_failures += 1
+            if read_failures == 1:
+                print(f'[Camera 0] Device index {CAMERA_FRONTAL_INDEX} stopped returning frames.')
+            if read_failures >= CAMERA_READ_FAILURE_LIMIT:
+                cap.release()
+                cap = wait_for_camera(CAMERA_FRONTAL_INDEX, 'Camera 0 / frontal')
+                read_failures = 0
+                if cap is None:
+                    break
             time.sleep(0.03)
             continue
+        read_failures = 0
+        frame_at = time.time()
             
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
@@ -112,37 +245,62 @@ def camera_loop_0():
         
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+            with camera_roles_lock:
+                use_for_gait = camera_roles_swapped
+            if use_for_gait:
+                try:
+                    sample = pose_sample_from_landmarks(results.pose_landmarks, w, h)
+                    if sample is not None:
+                        store_sagittal_sample(sample, frame_at)
+                except Exception:
+                    pass
             
-        draw_overlay_text(frame, "CAM 1: MAT TRUOC (FRONTAL)", (20, 40), color=(0, 255, 255))
-        
         with frame_lock_0:
             latest_frame_0 = frame.copy()
+            latest_frame_0_at = frame_at
+            if results.pose_landmarks:
+                latest_pose_0_at = frame_at
             
         time.sleep(0.03)
         
-    cap.release()
+    if cap is not None:
+        cap.release()
     pose.close()
     print("[Camera 0] thread stopped.")
 
 def camera_loop_1():
     """Camera index 1: Sagittal view (does joints calculations & recording buffers)"""
-    global latest_frame_1, latest_frame_0, running, is_recording, record_start_time
+    global latest_frame_1, latest_frame_1_at, latest_pose_1_at, running, is_recording, record_start_time
     global recorded_timestamps, recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle
-    global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt
+    global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt, recorded_trunk_tilt
     
     pose = create_pose_detector()
     camera_index = CAMERA_FRONTAL_INDEX if SINGLE_CAMERA_MODE else CAMERA_SAGITTAL_INDEX
-    cap = cv2.VideoCapture(camera_index, CAMERA_BACKEND)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap = wait_for_camera(camera_index, 'Camera 1 / sagittal')
+    if cap is None:
+        print(f'[Camera 1] Cannot open device index {camera_index}.')
+        pose.close()
+        return
+    read_failures = 0
     
     print("[Camera 1] Sagittal thread started.")
     
     while running:
         success, frame = cap.read()
         if not success:
+            read_failures += 1
+            if read_failures == 1:
+                print(f'[Camera 1] Device index {camera_index} stopped returning frames.')
+            if read_failures >= CAMERA_READ_FAILURE_LIMIT:
+                cap.release()
+                cap = wait_for_camera(camera_index, 'Camera 1 / sagittal')
+                read_failures = 0
+                if cap is None:
+                    break
             time.sleep(0.05)
             continue
+        read_failures = 0
+        frame_at = time.time()
             
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
@@ -156,6 +314,8 @@ def camera_loop_1():
         right_hip_angle = 0
         left_hip_angle = 0
         pelvic_tilt_deg = 0.0
+        trunk_tilt_deg = 0.0
+        pose_valid = False
         
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
@@ -187,30 +347,51 @@ def camera_loop_1():
                 dy = l_hip[1] - r_hip[1]
                 dx = l_hip[0] - r_hip[0]
                 pelvic_tilt_deg = math.atan2(dy, dx) * 180.0 / math.pi
+
+                mid_shoulder = [(l_shoulder[0] + r_shoulder[0]) / 2,
+                                (l_shoulder[1] + r_shoulder[1]) / 2]
+                mid_hip = [(l_hip[0] + r_hip[0]) / 2,
+                           (l_hip[1] + r_hip[1]) / 2]
+                trunk_tilt_deg = normalize_axial_angle(math.degrees(math.atan2(
+                    mid_shoulder[0] - mid_hip[0],
+                    mid_hip[1] - mid_shoulder[1],
+                )))
+                joint_angles = (
+                    right_knee_angle, left_knee_angle,
+                    right_ankle_angle, left_ankle_angle,
+                    right_hip_angle, left_hip_angle,
+                )
+                pose_valid = (
+                    all(value > 0 for value in joint_angles)
+                    and all(math.isfinite(float(value)) for value in (
+                        *joint_angles, pelvic_tilt_deg, trunk_tilt_deg,
+                    ))
+                )
                 
                 draw_overlay_text(frame, f"Hong P: {right_hip_angle}*", (int(r_hip[0]) + 10, int(r_hip[1])), color=(0, 255, 255))
                 draw_overlay_text(frame, f"Hong T: {left_hip_angle}*", (int(l_hip[0]) + 10, int(l_hip[1])), color=(255, 150, 0))
                 draw_overlay_text(frame, f"Goi P: {right_knee_angle}*", (int(r_knee[0]) + 10, int(r_knee[1])), color=(0, 255, 255))
                 draw_overlay_text(frame, f"Goi T: {left_knee_angle}*", (int(l_knee[0]) + 10, int(l_knee[1])), color=(255, 150, 0))
-                draw_overlay_text(frame, f"Tilt: {pelvic_tilt_deg:.1f}*", (20, 80), color=(100, 255, 100))
+                draw_overlay_text(frame, f"Than: {trunk_tilt_deg:.1f}*", (20, 80), color=(100, 255, 100))
             except Exception:
                 pass
-                
-        # Continuous recording logic
-        if is_recording:
-            elapsed = time.time() - record_start_time
-            if elapsed <= record_duration:
-                recorded_timestamps.append(elapsed)
-                recorded_left_knee.append(left_knee_angle)
-                recorded_right_knee.append(right_knee_angle)
-                recorded_left_ankle.append(left_ankle_angle)
-                recorded_right_ankle.append(right_ankle_angle)
-                recorded_pelvic_tilt.append(pelvic_tilt_deg)
-                recorded_left_hip.append(left_hip_angle)
-                recorded_right_hip.append(right_hip_angle)
-            else:
-                is_recording = False
-                save_recorded_data_to_db()
+
+        with camera_roles_lock:
+            use_for_gait = not camera_roles_swapped
+        if pose_valid and use_for_gait:
+            sample = {
+                'time': frame_at,
+                'left_knee': left_knee_angle,
+                'right_knee': right_knee_angle,
+                'left_ankle': left_ankle_angle,
+                'right_ankle': right_ankle_angle,
+                'pelvic_tilt': pelvic_tilt_deg,
+                'trunk_tilt': trunk_tilt_deg,
+                'left_hip': left_hip_angle,
+                'right_hip': right_hip_angle,
+            }
+            store_sagittal_sample(sample, frame_at)
+            latest_pose_1_at = frame_at
                 
         if is_recording:
             elapsed = time.time() - record_start_time
@@ -219,10 +400,12 @@ def camera_loop_1():
             
         with frame_lock_1:
             latest_frame_1 = frame.copy()
+            latest_frame_1_at = frame_at
             
         time.sleep(0.03)
         
-    cap.release()
+    if cap is not None:
+        cap.release()
     pose.close()
     print("[Camera 1] thread stopped.")
 
@@ -241,7 +424,12 @@ install_realtime_services(app, sys.modules[__name__])
 def gen_frames(camera_index):
     while True:
         frame_to_send = None
-        if camera_index == 0 and not SINGLE_CAMERA_MODE:
+        with camera_roles_lock:
+            swapped = camera_roles_swapped
+        physical_index = camera_index
+        if not SINGLE_CAMERA_MODE and swapped:
+            physical_index = 1 - camera_index
+        if physical_index == 0 and not SINGLE_CAMERA_MODE:
             with frame_lock_0:
                 if latest_frame_0 is not None:
                     frame_to_send = latest_frame_0.copy()
@@ -520,7 +708,7 @@ def start_recording(
 ):
     global is_recording, record_start_time, record_duration, healthy_leg, prosthetic_leg
     global recorded_timestamps, recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle
-    global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt
+    global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt, recorded_trunk_tilt
     global active_session_id, active_scan_type, session_markers
     
     recorded_timestamps = []
@@ -529,6 +717,7 @@ def start_recording(
     recorded_left_ankle = []
     recorded_right_ankle = []
     recorded_pelvic_tilt = []
+    recorded_trunk_tilt = []
     recorded_left_hip = []
     recorded_right_hip = []
     session_markers = []
@@ -702,13 +891,14 @@ def get_practice_attempts(patient_id: str):
 @app.get("/get_angles")
 def get_angles():
     global recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle, recorded_pelvic_tilt
-    global recorded_left_hip, recorded_right_hip
+    global recorded_left_hip, recorded_right_hip, recorded_trunk_tilt
     return {
         "left_knee": resample(recorded_left_knee),
         "right_knee": resample(recorded_right_knee),
         "left_ankle": resample(recorded_left_ankle),
         "right_ankle": resample(recorded_right_ankle),
         "pelvic_tilt": resample(recorded_pelvic_tilt),
+        "trunk_tilt": resample(recorded_trunk_tilt),
         "left_hip": resample(recorded_left_hip),
         "right_hip": resample(recorded_right_hip),
         "total_frames_collected": len(recorded_left_knee)

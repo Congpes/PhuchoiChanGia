@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -34,8 +35,19 @@ class _FootPressurePainter extends CustomPainter {
     required this.matrix,
     required this.isLeft,
     required this.scaleMax,
-    this.rawAdc = false,
+    required this.rawAdc,
   });
+
+  static const _heatStops = <double>[0, 0.16, 0.32, 0.50, 0.68, 0.84, 1];
+  static const _heatColors = <Color>[
+    Color(0xFF4389C7),
+    Color(0xFF19A9D1),
+    Color(0xFF13A875),
+    Color(0xFF75D054),
+    Color(0xFFF1E51D),
+    Color(0xFFF7941D),
+    Color(0xFFD9271C),
+  ];
 
   final List<List<double>>? matrix;
   final bool isLeft;
@@ -44,95 +56,217 @@ class _FootPressurePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+
     canvas.save();
-    if (isLeft) {
-      canvas.translate(size.width, 0);
-      canvas.scale(-1, 1);
-    }
+    final angle = isLeft ? 0.035 : -0.035;
+    canvas.translate(size.width / 2, size.height / 2);
+    canvas.rotate(angle);
+    canvas.scale(0.94, 0.94);
+    canvas.translate(-size.width / 2, -size.height / 2);
 
     final foot = _footPath(size);
+    final values = _normalizedMatrix();
+
     canvas.drawPath(
       foot,
       Paint()
-        ..color = const Color(0xFFE7EDF3)
+        ..color = const Color(0xFFDCE8F2)
         ..style = PaintingStyle.fill,
     );
-    canvas.save();
-    canvas.clipPath(foot);
 
-    final values = matrix ?? const <List<double>>[];
-    if (scaleMax > 0) {
-      for (var row = 0; row < math.min(12, values.length); row++) {
-        for (var column = 0;
-            column < math.min(4, values[row].length);
-            column++) {
-          final value = values[row][column];
-          if (value <= 0) continue;
-          final center = _sensorCenter(size, row, column);
-          final color = rawAdc
-              ? _rawAdcColor(value)
-              : _demoColor((value / scaleMax).clamp(0.0, 1.0));
-          final cellSize = math.min(size.width * 0.16, size.height * 0.065);
-          final cell = Rect.fromCenter(
-            center: center,
-            width: cellSize,
-            height: cellSize,
-          );
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(cell, Radius.circular(cellSize * 0.12)),
-            Paint()..color = color,
-          );
-        }
-      }
+    if (values != null) {
+      canvas.save();
+      canvas.clipPath(foot);
+      _paintSmoothHeatmap(canvas, size, _blur(values));
+      canvas.restore();
     }
 
-    canvas.restore();
     canvas.drawPath(
       foot,
       Paint()
-        ..color = const Color(0xFF6D7E91)
-        ..strokeWidth = math.max(1.2, size.width * 0.014)
+        ..color = const Color(0xFF647A91)
+        ..strokeWidth = math.max(1.25, size.width * 0.012)
         ..style = PaintingStyle.stroke,
     );
     canvas.restore();
   }
 
+  List<List<double>>? _normalizedMatrix() {
+    final values = matrix;
+    if (values == null || values.length != 12) return null;
+    if (values.any((row) => row.length != 4)) return null;
+
+    return List.generate(12, (row) {
+      return List.generate(4, (column) {
+        final value = values[row][column];
+        final ratio = rawAdc
+            ? ((4000.0 - value) / 3000.0).clamp(0.0, 1.0).toDouble()
+            : scaleMax <= 0
+                ? 0.0
+                : (value / scaleMax).clamp(0.0, 1.0).toDouble();
+        return math.pow(ratio, 0.78).toDouble();
+      });
+    });
+  }
+
+  List<List<double>> _blur(List<List<double>> source) {
+    final horizontal = List.generate(12, (_) => List.filled(4, 0.0));
+    for (var row = 0; row < 12; row++) {
+      for (var column = 0; column < 4; column++) {
+        final previous = source[row][math.max(0, column - 1)];
+        final current = source[row][column];
+        final next = source[row][math.min(3, column + 1)];
+        horizontal[row][column] = (previous + 2 * current + next) / 4;
+      }
+    }
+
+    final result = List.generate(12, (_) => List.filled(4, 0.0));
+    for (var row = 0; row < 12; row++) {
+      for (var column = 0; column < 4; column++) {
+        final previous = horizontal[math.max(0, row - 1)][column];
+        final current = horizontal[row][column];
+        final next = horizontal[math.min(11, row + 1)][column];
+        result[row][column] = (previous + 2 * current + next) / 4;
+      }
+    }
+    return result;
+  }
+
+  void _paintSmoothHeatmap(
+    Canvas canvas,
+    Size size,
+    List<List<double>> values,
+  ) {
+    final columns = (size.width / 4).round().clamp(24, 48).toInt();
+    final rows = (size.height / 4).round().clamp(60, 112).toInt();
+    final positions = <Offset>[];
+    final colors = <Color>[];
+    final indices = <int>[];
+
+    for (var row = 0; row <= rows; row++) {
+      final y = row / rows;
+      for (var column = 0; column <= columns; column++) {
+        final x = column / columns;
+        positions.add(Offset(x * size.width, y * size.height));
+        colors.add(_heatColor(_sampleBicubic(values, x, y)));
+      }
+    }
+
+    final stride = columns + 1;
+    for (var row = 0; row < rows; row++) {
+      for (var column = 0; column < columns; column++) {
+        final topLeft = row * stride + column;
+        final topRight = topLeft + 1;
+        final bottomLeft = topLeft + stride;
+        final bottomRight = bottomLeft + 1;
+        indices.addAll([
+          topLeft,
+          bottomLeft,
+          topRight,
+          topRight,
+          bottomLeft,
+          bottomRight,
+        ]);
+      }
+    }
+
+    final vertices = ui.Vertices(
+      ui.VertexMode.triangles,
+      positions,
+      colors: colors,
+      indices: indices,
+    );
+    canvas.drawVertices(
+      vertices,
+      BlendMode.modulate,
+      Paint()
+        ..color = Colors.white
+        ..isAntiAlias = true,
+    );
+  }
+
+  double _sampleBicubic(
+    List<List<double>> values,
+    double normalizedX,
+    double normalizedY,
+  ) {
+    final columnPosition = (((normalizedX - 0.14) / 0.72) * 3).clamp(0.0, 3.0);
+    final rowPosition = (((normalizedY - 0.035) / 0.93) * 11).clamp(0.0, 11.0);
+    final column = columnPosition.floor();
+    final row = rowPosition.floor();
+    final tx = columnPosition - column;
+    final ty = rowPosition - row;
+
+    final rowSamples = List<double>.generate(4, (offset) {
+      final sourceRow = (row + offset - 1).clamp(0, 11).toInt();
+      return _catmullRom(
+        values[sourceRow][(column - 1).clamp(0, 3).toInt()],
+        values[sourceRow][column.clamp(0, 3).toInt()],
+        values[sourceRow][(column + 1).clamp(0, 3).toInt()],
+        values[sourceRow][(column + 2).clamp(0, 3).toInt()],
+        tx,
+      );
+    });
+
+    return _catmullRom(
+      rowSamples[0],
+      rowSamples[1],
+      rowSamples[2],
+      rowSamples[3],
+      ty,
+    ).clamp(0.0, 1.0).toDouble();
+  }
+
+  double _catmullRom(
+    double first,
+    double second,
+    double third,
+    double fourth,
+    double amount,
+  ) {
+    final amount2 = amount * amount;
+    final amount3 = amount2 * amount;
+    return 0.5 *
+        ((2 * second) +
+            (-first + third) * amount +
+            (2 * first - 5 * second + 4 * third - fourth) * amount2 +
+            (-first + 3 * second - 3 * third + fourth) * amount3);
+  }
+
+  Color _heatColor(double ratio) {
+    final value = ratio.clamp(0.0, 1.0).toDouble();
+    for (var index = 0; index < _heatStops.length - 1; index++) {
+      final start = _heatStops[index];
+      final end = _heatStops[index + 1];
+      if (value <= end) {
+        final local = ((value - start) / (end - start)).clamp(0.0, 1.0);
+        return Color.lerp(
+          _heatColors[index],
+          _heatColors[index + 1],
+          local,
+        )!;
+      }
+    }
+    return _heatColors.last;
+  }
+
   Path _footPath(Size size) {
-    double x(double value) => value * size.width;
+    double x(double value) => (isLeft ? value : 1 - value) * size.width;
     double y(double value) => value * size.height;
+
     return Path()
-      ..moveTo(x(0.50), y(0.015))
-      ..cubicTo(x(0.27), y(0.005), x(0.12), y(0.13), x(0.12), y(0.30))
-      ..cubicTo(x(0.12), y(0.42), x(0.21), y(0.49), x(0.22), y(0.60))
-      ..cubicTo(x(0.23), y(0.72), x(0.17), y(0.86), x(0.27), y(0.95))
-      ..cubicTo(x(0.38), y(1.015), x(0.62), y(1.015), x(0.73), y(0.95))
-      ..cubicTo(x(0.83), y(0.86), x(0.77), y(0.72), x(0.74), y(0.62))
-      ..cubicTo(x(0.71), y(0.52), x(0.73), y(0.46), x(0.82), y(0.39))
-      ..cubicTo(x(0.93), y(0.30), x(0.90), y(0.13), x(0.73), y(0.055))
-      ..cubicTo(x(0.66), y(0.025), x(0.58), y(0.015), x(0.50), y(0.015))
+      ..moveTo(x(0.48), y(0.018))
+      ..cubicTo(x(0.28), y(0.002), x(0.12), y(0.085), x(0.09), y(0.235))
+      ..cubicTo(x(0.06), y(0.36), x(0.14), y(0.45), x(0.22), y(0.525))
+      ..cubicTo(x(0.28), y(0.59), x(0.23), y(0.70), x(0.21), y(0.82))
+      ..cubicTo(x(0.19), y(0.94), x(0.29), y(0.985), x(0.46), y(0.99))
+      ..cubicTo(x(0.64), y(0.995), x(0.77), y(0.95), x(0.76), y(0.84))
+      ..cubicTo(x(0.75), y(0.73), x(0.66), y(0.64), x(0.68), y(0.56))
+      ..cubicTo(x(0.70), y(0.49), x(0.82), y(0.46), x(0.89), y(0.38))
+      ..cubicTo(x(0.98), y(0.27), x(0.91), y(0.12), x(0.77), y(0.055))
+      ..cubicTo(x(0.68), y(0.014), x(0.58), y(0.01), x(0.48), y(0.018))
       ..close();
-  }
-
-  Offset _sensorCenter(Size size, int row, int column) {
-    const xPositions = [0.25, 0.42, 0.59, 0.75];
-    final y = 0.075 + ((11 - row) / 11) * 0.86;
-    return Offset(size.width * xPositions[column], size.height * y);
-  }
-
-  Color _rawAdcColor(double value) {
-    if (value >= 4000) return const Color(0xFF22A06B);
-    if (value >= 3000) return const Color(0xFFFACC15);
-    if (value >= 2000) return const Color(0xFFF59E0B);
-    if (value >= 1000) return const Color(0xFFEA580C);
-    return const Color(0xFFDC2626);
-  }
-
-  Color _demoColor(double ratio) {
-    if (ratio < 0.20) return const Color(0xFF22A06B);
-    if (ratio < 0.40) return const Color(0xFFFACC15);
-    if (ratio < 0.65) return const Color(0xFFF59E0B);
-    if (ratio < 0.82) return const Color(0xFFEA580C);
-    return const Color(0xFFDC2626);
   }
 
   @override

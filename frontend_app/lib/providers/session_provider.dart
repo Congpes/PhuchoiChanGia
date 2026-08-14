@@ -22,6 +22,7 @@ class SessionProvider extends ChangeNotifier {
   int _activeTabIndex = 0;
   bool _isLoading = false;
   Timer? _recordTimer;
+  bool _syncingRecordingStatus = false;
 
   List<Patient> get patients => _patients;
   Patient? get activePatient => _activePatient;
@@ -588,15 +589,51 @@ class SessionProvider extends ChangeNotifier {
       s.recordingElapsedSec = 0;
       s.playbackSec = 0;
       _recordTimer?.cancel();
-      _recordTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-        s.recordingElapsedSec += 0.1;
-        s.playbackSec = s.recordingElapsedSec;
-        notifyListeners();
+      _recordTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+        syncRecordingStatus();
       });
+      await syncRecordingStatus();
       notifyListeners();
       return null;
     } catch (error) {
       return 'Kh\u00f4ng nh\u1eadn \u0111\u01b0\u1ee3c ph\u1ea3n h\u1ed3i backend. H\u00e3y kh\u1edfi \u0111\u1ed9ng l\u1ea1i backend.';
+    }
+  }
+
+  Future<void> syncRecordingStatus() async {
+    final s = _activeSession;
+    if (s == null || _syncingRecordingStatus) return;
+    _syncingRecordingStatus = true;
+    try {
+      final response = await http
+          .get(Uri.parse('http://127.0.0.1:8000/camera-status'))
+          .timeout(const Duration(seconds: 2));
+      if (response.statusCode != 200) return;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final recording = body['recording'] as Map<String, dynamic>?;
+      if (recording == null) return;
+      final backendActive = recording['active'] == true;
+      final backendSession = recording['sessionId']?.toString() ?? '';
+      if (backendActive && backendSession == s.id) {
+        final elapsed = (recording['elapsed'] as num?)?.toDouble() ?? 0.0;
+        s.isRecording = true;
+        s.recordingElapsedSec = elapsed;
+        s.playbackSec = elapsed;
+        _recordTimer?.cancel();
+        _recordTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+          syncRecordingStatus();
+        });
+        notifyListeners();
+      } else if (!backendActive && s.isRecording) {
+        _recordTimer?.cancel();
+        _recordTimer = null;
+        s.isRecording = false;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Keep the last known UI state during a brief backend interruption.
+    } finally {
+      _syncingRecordingStatus = false;
     }
   }
 
@@ -663,6 +700,22 @@ class SessionProvider extends ChangeNotifier {
         } catch (_) {
           return 'Kh\u00f4ng l\u01b0u \u0111\u01b0\u1ee3c \u0111o\u1ea1n ph\u00e2n t\u00edch.';
         }
+      }
+      // The clip and its scan are persisted by the backend. Refresh the
+      // active session so Analysis can resolve the new clip's scan data
+      // immediately, while keeping the live recording UI state intact.
+      final phase = s.phase;
+      final isRecording = s.isRecording;
+      final elapsed = s.recordingElapsedSec;
+      final playback = s.playbackSec;
+      await fetchPatients();
+      final refreshed = _activeSession;
+      if (refreshed != null && refreshed.id == s.id) {
+        refreshed.phase = phase;
+        refreshed.isRecording = isRecording;
+        refreshed.recordingElapsedSec = elapsed;
+        refreshed.playbackSec = playback;
+        notifyListeners();
       }
       return null;
     } catch (error) {

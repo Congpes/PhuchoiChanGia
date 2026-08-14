@@ -18,6 +18,7 @@ class FsrRegionAnalysis extends StatefulWidget {
 
 class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
   Map<String, dynamic>? _data;
+  int _windowSize = 7;
   bool _loading = false;
   String? _error;
 
@@ -41,7 +42,7 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
     try {
       final response = await http.get(
         Uri.parse(
-          'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis',
+          'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis?window=$_windowSize',
         ),
       );
       if (response.statusCode != 200) {
@@ -79,39 +80,100 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
       );
     }
 
-    final items = const [
-      ('heel', 'L\u1ef0C V\u00d9NG G\u00d3T - PH\u00c2N T\u00cdCH'),
+    const items = [
+      ('heel', 'M\u1ee8C T\u1ea2I V\u00d9NG G\u00d3T - PH\u00c2N T\u00cdCH'),
       (
         'midfoot',
-        'L\u1ef0C V\u00d9NG GI\u1eeeA B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
+        'M\u1ee8C T\u1ea2I V\u00d9NG GI\u1eeeA B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
       ),
       (
         'forefoot',
-        'L\u1ef0C V\u00d9NG TR\u01af\u1edaC B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
+        'M\u1ee8C T\u1ea2I V\u00d9NG TR\u01af\u1edaC B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
       ),
     ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 940 ? 2 : 1;
-        return GridView.builder(
-          padding: const EdgeInsets.all(12),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 300,
+    final healthySide = _data?['healthySide']?.toString().toLowerCase();
+    String sideLabel(String side) {
+      final sideName = side == 'left' ? 'trái' : 'phải';
+      return side == healthySide
+          ? 'Chân $sideName · lành'
+          : 'Chân $sideName · giả';
+    }
+
+    final pairCount = (_data?['pairCount'] as num?)?.toInt() ?? 0;
+    return Column(
+      children: [
+        Container(
+          margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppColors.panel,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(8),
           ),
-          itemCount: items.length,
-          itemBuilder: (_, index) {
-            final item = items[index];
-            return _RegionChartCard(
-              title: item.$2,
-              region: regions[item.$1],
-              unit: _data?['unit']?.toString() ?? 'raw_adc',
-            );
-          },
-        );
-      },
+          child: Row(
+            children: [
+              const Icon(Icons.analytics_outlined,
+                  size: 15, color: AppColors.accent),
+              const SizedBox(width: 7),
+              Text(
+                'Mean ± SD · $pairCount cặp trái–phải hợp lệ',
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+              ),
+              const Spacer(),
+              const Text('Cửa sổ phân tích',
+                  style:
+                      TextStyle(fontSize: 9, color: AppColors.textSecondary)),
+              const SizedBox(width: 6),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: _windowSize,
+                  isDense: true,
+                  items: const [5, 7]
+                      .map((value) => DropdownMenuItem(
+                            value: value,
+                            child: Text('$value cặp',
+                                style: const TextStyle(fontSize: 10)),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null || value == _windowSize) return;
+                    setState(() => _windowSize = value);
+                    _load();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 940 ? 2 : 1;
+              return GridView.builder(
+                padding: const EdgeInsets.all(12),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  mainAxisExtent: 300,
+                ),
+                itemCount: items.length,
+                itemBuilder: (_, index) {
+                  final item = items[index];
+                  return _RegionChartCard(
+                    title: item.$2,
+                    region: regions[item.$1],
+                    unit: _data?['unit']?.toString() ?? 'relative_load',
+                    leftLabel: sideLabel('left'),
+                    rightLabel: sideLabel('right'),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -141,11 +203,15 @@ class _RegionChartCard extends StatelessWidget {
     required this.title,
     required this.region,
     required this.unit,
+    required this.leftLabel,
+    required this.rightLabel,
   });
 
   final String title;
   final dynamic region;
   final String unit;
+  final String leftLabel;
+  final String rightLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +237,7 @@ class _RegionChartCard extends StatelessWidget {
           const SizedBox(height: 3),
           Text(
             'Mean \u00b1 SD \u00b7 0\u2013100% pha ch\u1ed1ng \u0111\u1ee1'
-            ' \u00b7 ${max(left.steps, right.steps)} b\u01b0\u1edbc',
+            ' \u00b7 ${max(left.steps, right.steps)} c\u1eb7p',
             style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 8),
@@ -189,15 +255,14 @@ class _RegionChartCard extends StatelessWidget {
                   ),
           ),
           const SizedBox(height: 5),
-          const Row(
+          Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _ChartLegend(
-                  color: AppColors.leftLeg, label: 'Ch\u00e2n tr\u00e1i'),
-              SizedBox(width: 16),
+              _ChartLegend(color: AppColors.leftLeg, label: leftLabel),
+              const SizedBox(width: 16),
               _ChartLegend(
                 color: AppColors.rightLeg,
-                label: 'Ch\u00e2n ph\u1ea3i',
+                label: rightLabel,
                 dashed: true,
               ),
             ],
@@ -283,10 +348,16 @@ class _RegionLineChart extends StatelessWidget {
           show: true,
           drawVerticalLine: true,
           horizontalInterval: null,
-          getDrawingHorizontalLine: (_) =>
-              const FlLine(color: AppColors.border, strokeWidth: 0.7),
-          getDrawingVerticalLine: (_) =>
-              const FlLine(color: AppColors.border, strokeWidth: 0.7),
+          getDrawingHorizontalLine: (_) => const FlLine(
+            color: AppColors.border,
+            strokeWidth: 0.7,
+            dashArray: [4, 4],
+          ),
+          getDrawingVerticalLine: (_) => const FlLine(
+            color: AppColors.border,
+            strokeWidth: 0.7,
+            dashArray: [4, 4],
+          ),
         ),
         borderData: FlBorderData(
           show: true,
@@ -299,12 +370,12 @@ class _RegionLineChart extends StatelessWidget {
               const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(
             axisNameWidget: const Text(
-              '% pha ch\u1ed1ng \u0111\u1ee1',
+              '% pha ch\u1ed1ng \u0111\u1ee1 chu\u1ea9n h\u00f3a',
               style: TextStyle(fontSize: 8),
             ),
             sideTitles: SideTitles(
               showTitles: true,
-              interval: 25,
+              interval: 20,
               reservedSize: 22,
               getTitlesWidget: (value, _) => Text(
                 value.toInt().toString(),
@@ -313,7 +384,10 @@ class _RegionLineChart extends StatelessWidget {
             ),
           ),
           leftTitles: AxisTitles(
-            axisNameWidget: Text(unit, style: const TextStyle(fontSize: 8)),
+            axisNameWidget: Text(
+              unit == 'relative_load' ? 'Mức tải tương đối (đ.v.)' : unit,
+              style: const TextStyle(fontSize: 8),
+            ),
             sideTitles: SideTitles(
               showTitles: true,
               reservedSize: 42,
