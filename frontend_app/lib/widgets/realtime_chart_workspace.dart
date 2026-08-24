@@ -4,9 +4,11 @@ import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'foot_pressure_map.dart';
+import 'fsr_force_phase_dashboard.dart';
 import '../theme/app_theme.dart';
 
 enum RealtimeChartType {
@@ -15,6 +17,7 @@ enum RealtimeChartType {
   heelForce,
   midfootForce,
   forefootForce,
+  forcePhases,
   kneeCycle,
   trunkCycle,
   hipCycle,
@@ -30,10 +33,11 @@ extension RealtimeChartTypeLabel on RealtimeChartType {
           'M\u1ee9c t\u1ea3i v\u00f9ng gi\u1eefa b\u00e0n ch\u00e2n',
         RealtimeChartType.forefootForce =>
           'M\u1ee9c t\u1ea3i v\u00f9ng tr\u01b0\u1edbc b\u00e0n ch\u00e2n',
-        RealtimeChartType.kneeCycle => 'G\u00f3c g\u1ed1i 2D',
+        RealtimeChartType.forcePhases => 'Lực FSR 3 pha · chân trái/phải',
+        RealtimeChartType.kneeCycle => 'Góc gập gối 2D',
         RealtimeChartType.trunkCycle =>
           'G\u00f3c nghi\u00eang th\u00e2n tr\u01b0\u1edbc\u2013sau',
-        RealtimeChartType.hipCycle => 'G\u00f3c h\u00f4ng 2D',
+        RealtimeChartType.hipCycle => 'Góc gập hông 2D',
       };
 
   IconData get icon => switch (this) {
@@ -42,6 +46,7 @@ extension RealtimeChartTypeLabel on RealtimeChartType {
         RealtimeChartType.heelForce => Icons.vertical_align_bottom,
         RealtimeChartType.midfootForce => Icons.swap_vert,
         RealtimeChartType.forefootForce => Icons.vertical_align_top,
+        RealtimeChartType.forcePhases => Icons.monitor_heart_outlined,
         RealtimeChartType.kneeCycle => Icons.directions_walk,
         RealtimeChartType.trunkCycle => Icons.accessibility_new,
         RealtimeChartType.hipCycle => Icons.monitor_heart_outlined,
@@ -53,10 +58,12 @@ class RealtimeChartWorkspace extends StatefulWidget {
     super.key,
     required this.selectedCharts,
     required this.healthySide,
+    this.demoMode = false,
   });
 
   final Set<RealtimeChartType> selectedCharts;
   final String healthySide;
+  final bool demoMode;
 
   @override
   State<RealtimeChartWorkspace> createState() => _RealtimeChartWorkspaceState();
@@ -76,11 +83,15 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
   final List<double> _leftForefootForce = [];
   final List<double> _rightForefootForce = [];
   Map<String, dynamic> _fsrSteps = const {};
+  Map<String, dynamic> _fsrLatest = const {};
   Map<String, dynamic> _gaitSteps = const {};
   int _windowSize = 5;
-  int? _selectedPairIndex;
   bool _fsrConnected = false;
   bool _gaitOnline = false;
+  bool _demoGaitLoaded = false;
+  Map<String, dynamic>? _demoGaitSource;
+  DateTime? _demoPlaybackStartedAt;
+  int _demoVisiblePairCount = -1;
   bool _useFsrDemo = false;
   double _demoPhase = 0;
 
@@ -90,6 +101,23 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
     _refresh();
     _timer =
         Timer.periodic(const Duration(milliseconds: 200), (_) => _refresh());
+  }
+
+  @override
+  void didUpdateWidget(covariant RealtimeChartWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.demoMode == widget.demoMode) return;
+    if (widget.demoMode) {
+      _demoPlaybackStartedAt = DateTime.now();
+      _demoVisiblePairCount = -1;
+      _loadDemoGait();
+    } else {
+      setState(() {
+        _gaitSteps = const {};
+        _gaitOnline = false;
+      });
+      _refreshGait();
+    }
   }
 
   @override
@@ -144,6 +172,7 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
           _leftMatrix = leftConnected ? left : null;
           _rightMatrix = rightConnected ? right : null;
           _fsrSteps = steps;
+          _fsrLatest = fsr;
           _fsrConnected = leftConnected || rightConnected;
           if (left != null || right != null) {
             final empty = List.generate(12, (_) => List.filled(4, 4000.0));
@@ -161,7 +190,60 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
     }
   }
 
+  Future<void> _loadDemoGait() async {
+    if (_demoGaitLoaded) {
+      _updateDemoGaitProgress();
+      return;
+    }
+    try {
+      final source =
+          await rootBundle.loadString('assets/demo/demo_gait_data.json');
+      final gait = jsonDecode(source) as Map<String, dynamic>;
+      if (!mounted || !widget.demoMode) return;
+      _demoGaitSource = gait;
+      _demoPlaybackStartedAt ??= DateTime.now();
+      _demoGaitLoaded = true;
+      _updateDemoGaitProgress();
+    } catch (_) {
+      if (mounted && widget.demoMode) {
+        setState(() => _gaitOnline = false);
+      }
+    }
+  }
+
+  void _updateDemoGaitProgress() {
+    final source = _demoGaitSource;
+    final startedAt = _demoPlaybackStartedAt;
+    if (!mounted || !widget.demoMode || source == null || startedAt == null) {
+      return;
+    }
+    final allCycles = source['cycles'];
+    if (allCycles is! List || allCycles.isEmpty) return;
+    final duration = (source['duration'] as num?)?.toDouble() ?? 10.4667;
+    if (duration <= 0) return;
+    final elapsed =
+        DateTime.now().difference(startedAt).inMilliseconds / 1000.0;
+    final videoPosition = elapsed % duration;
+    final visibleCount = min(allCycles.length,
+        (videoPosition / duration * (allCycles.length + 1)).floor());
+    if (visibleCount == _demoVisiblePairCount) return;
+    final visibleCycles = allCycles.take(visibleCount).toList();
+    final next = Map<String, dynamic>.from(source)
+      ..['cycles'] = visibleCycles
+      ..['cycleCount'] = visibleCount
+      ..['poseDetected'] = true;
+    setState(() {
+      _gaitSteps = next;
+      _gaitOnline = true;
+      _demoVisiblePairCount = visibleCount;
+    });
+  }
+
   Future<void> _refreshGait() async {
+    if (widget.demoMode) {
+      await _loadDemoGait();
+      return;
+    }
     try {
       final response = await http
           .get(Uri.parse(
@@ -340,15 +422,7 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
 
   Map<String, dynamic>? _activePair() {
     final pairs = _stepPairs();
-    if (pairs.isEmpty) return null;
-    if (_selectedPairIndex != null) {
-      for (final pair in pairs) {
-        if ((pair['pairIndex'] as num?)?.toInt() == _selectedPairIndex) {
-          return pair;
-        }
-      }
-    }
-    return pairs.last;
+    return pairs.isEmpty ? null : pairs.last;
   }
 
   List<double> _pairedCurve(String side, String region) {
@@ -372,7 +446,8 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
           RealtimeChartType.totalForce ||
           RealtimeChartType.heelForce ||
           RealtimeChartType.midfootForce ||
-          RealtimeChartType.forefootForce =>
+          RealtimeChartType.forefootForce ||
+          RealtimeChartType.forcePhases =>
             true,
           _ => false,
         });
@@ -394,15 +469,7 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
 
   Map<String, dynamic>? _activeGaitCycle() {
     final cycles = _gaitCycles();
-    if (cycles.isEmpty) return null;
-    if (_selectedPairIndex != null) {
-      for (final cycle in cycles) {
-        if ((cycle['pairIndex'] as num?)?.toInt() == _selectedPairIndex) {
-          return cycle;
-        }
-      }
-    }
-    return cycles.last;
+    return cycles.isEmpty ? null : cycles.last;
   }
 
   List<double> _gaitCurve(String side, String metric) {
@@ -414,20 +481,8 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
 
   Widget _pairControls() {
     final pairs = _comparisonPairs();
-    Map<String, dynamic>? active;
-    if (pairs.isNotEmpty) {
-      active = pairs.last;
-      if (_selectedPairIndex != null) {
-        for (final pair in pairs) {
-          if ((pair['pairIndex'] as num?)?.toInt() == _selectedPairIndex) {
-            active = pair;
-            break;
-          }
-        }
-      }
-    }
+    final active = pairs.isEmpty ? null : pairs.last;
     final activeIndex = (active?['pairIndex'] as num?)?.toInt();
-    final position = active == null ? 0 : pairs.indexOf(active) + 1;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 7, 12, 0),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -440,10 +495,31 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
         children: [
           const Icon(Icons.compare_arrows, size: 15, color: AppColors.accent),
           const SizedBox(width: 7),
-          const Text('So s\u00e1nh theo c\u1eb7p',
+          const Text('Theo dõi cặp bước trực tiếp',
               style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: pairs.isEmpty
+                  ? AppColors.textSecondary
+                  : AppColors.accentGreen,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            pairs.isEmpty
+                ? 'Chờ cặp bước đầu tiên'
+                : 'Mới nhất: cặp #$activeIndex',
+            style: const TextStyle(
+              fontSize: 9,
+              color: AppColors.textSecondary,
+            ),
+          ),
           const Spacer(),
-          const Text('C\u1eeda s\u1ed5',
+          const Text('Giữ gần nhất',
               style: TextStyle(fontSize: 9, color: AppColors.textSecondary)),
           const SizedBox(width: 5),
           DropdownButtonHideUnderline(
@@ -453,49 +529,22 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
               items: const [5, 7]
                   .map((value) => DropdownMenuItem(
                         value: value,
-                        child: Text('$value c\u1eb7p',
+                        child: Text('$value cặp',
                             style: const TextStyle(fontSize: 10)),
                       ))
                   .toList(),
               onChanged: (value) {
                 if (value == null || value == _windowSize) return;
-                setState(() {
-                  _windowSize = value;
-                  _selectedPairIndex = null;
-                });
+                setState(() => _windowSize = value);
                 _refresh();
               },
-            ),
-          ),
-          const SizedBox(width: 14),
-          const Text('\u0110ang xem',
-              style: TextStyle(fontSize: 9, color: AppColors.textSecondary)),
-          const SizedBox(width: 5),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: activeIndex,
-              hint: const Text('Ch\u01b0a \u0111\u1ee7 c\u1eb7p',
-                  style: TextStyle(fontSize: 10)),
-              isDense: true,
-              items: pairs.map((pair) {
-                final index = (pair['pairIndex'] as num?)?.toInt() ?? 0;
-                final localPosition = pairs.indexOf(pair) + 1;
-                return DropdownMenuItem(
-                  value: index,
-                  child: Text('C\u1eb7p $localPosition/${pairs.length}',
-                      style: const TextStyle(fontSize: 10)),
-                );
-              }).toList(),
-              onChanged: pairs.isEmpty
-                  ? null
-                  : (value) => setState(() => _selectedPairIndex = value),
             ),
           ),
           const SizedBox(width: 8),
           Text(
             pairs.isEmpty
-                ? '0/$_windowSize c\u1eb7p h\u1ee3p l\u1ec7'
-                : '$position/${pairs.length}',
+                ? '0 cặp'
+                : '${pairs.length}/$_windowSize cặp trong bộ nhớ',
             style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
           ),
         ],
@@ -518,6 +567,52 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
+              final showForcePhases =
+                  charts.contains(RealtimeChartType.forcePhases);
+              if (showForcePhases) {
+                final upperCharts = charts
+                    .where((type) => type != RealtimeChartType.forcePhases)
+                    .toList();
+                final upperHeight = upperCharts.isEmpty
+                    ? 0.0
+                    : max(220.0, constraints.maxHeight * 0.48);
+                final phaseHeight = upperCharts.isEmpty
+                    ? max(400.0, constraints.maxHeight - 16)
+                    : max(440.0, constraints.maxHeight * 0.90);
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+                  children: [
+                    if (upperCharts.isNotEmpty) ...[
+                      SizedBox(
+                        height: upperHeight,
+                        child: upperCharts.length == 1
+                            ? _chartCard(upperCharts.single)
+                            : GridView.builder(
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount:
+                                      constraints.maxWidth < 580 ? 1 : 2,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                  mainAxisExtent: upperHeight,
+                                ),
+                                itemCount: upperCharts.length,
+                                itemBuilder: (_, index) =>
+                                    _chartCard(upperCharts[index]),
+                              ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    SizedBox(
+                      height: phaseHeight,
+                      width: double.infinity,
+                      child: _chartCard(RealtimeChartType.forcePhases),
+                    ),
+                  ],
+                );
+              }
+
               final columns =
                   charts.length == 1 || constraints.maxWidth < 580 ? 1 : 2;
               final rowsVisible = columns == 1
@@ -573,7 +668,8 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
       RealtimeChartType.totalForce ||
       RealtimeChartType.heelForce ||
       RealtimeChartType.midfootForce ||
-      RealtimeChartType.forefootForce =>
+      RealtimeChartType.forefootForce ||
+      RealtimeChartType.forcePhases =>
         true,
       _ => false,
     };
@@ -586,6 +682,10 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
     };
     final gaitCycles = (_gaitSteps['cycleCount'] as num?)?.toInt() ?? 0;
     final gaitPoseDetected = _gaitSteps['poseDetected'] == true;
+    final gaitQuality = _gaitSteps['poseQuality'];
+    final gaitUnreliable =
+        gaitQuality is Map && gaitQuality['status'] == 'unreliable';
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.panel,
@@ -666,11 +766,13 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
                       shape: BoxShape.circle,
                       color: !_gaitOnline
                           ? AppColors.critical
-                          : gaitCycles > 0
-                              ? AppColors.accentGreen
-                              : gaitPoseDetected
-                                  ? AppColors.warning
-                                  : AppColors.baseline,
+                          : gaitUnreliable
+                              ? AppColors.warning
+                              : gaitCycles > 0
+                                  ? AppColors.accentGreen
+                                  : gaitPoseDetected
+                                      ? AppColors.warning
+                                      : AppColors.baseline,
                     ),
                   ),
                   const SizedBox(width: 5),
@@ -678,7 +780,9 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
                     !_gaitOnline
                         ? 'Backend chưa kết nối'
                         : gaitCycles > 0
-                            ? '$gaitCycles chu kỳ'
+                            ? gaitUnreliable
+                                ? '$gaitCycles chu kỳ · cần kiểm tra'
+                                : '$gaitCycles chu kỳ'
                             : gaitPoseDetected
                                 ? 'Đang thu chuyển động'
                                 : 'Chưa thấy toàn thân',
@@ -711,7 +815,8 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
   }
 
   Widget _legend(RealtimeChartType type) {
-    if (type == RealtimeChartType.pressure) {
+    if (type == RealtimeChartType.pressure ||
+        type == RealtimeChartType.forcePhases) {
       return const SizedBox(height: 6);
     }
     final healthy = (_fsrSteps['healthySide']?.toString() ?? widget.healthySide)
@@ -810,18 +915,20 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
           demoRight: _rightForefootForce,
           yLabel: 'Mức tải vùng trước bàn chân tương đối',
         ),
+      RealtimeChartType.forcePhases =>
+        FsrForcePhaseDashboard(analysis: _fsrPhaseAnalysis()),
       RealtimeChartType.kneeCycle => _lineChart(
           _gaitCurve('left', 'knee'),
           _gaitCurve('right', 'knee'),
           xLabel: '% chu kỳ camera chuẩn hóa',
-          yLabel: 'Góc trong khớp gối 2D (°)',
+          yLabel: 'Góc gập khớp gối 2D (°)',
           emptyMessage: _gaitEmptyMessage(),
         ),
       RealtimeChartType.hipCycle => _lineChart(
           _gaitCurve('left', 'hip'),
           _gaitCurve('right', 'hip'),
           xLabel: '% chu kỳ camera chuẩn hóa',
-          yLabel: 'Góc trong khớp hông 2D (°)',
+          yLabel: 'Góc gập khớp hông 2D (°)',
           emptyMessage: _gaitEmptyMessage(),
         ),
       RealtimeChartType.trunkCycle => _lineChart(
@@ -831,6 +938,32 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
           yLabel: 'Góc nghiêng thân trước–sau (°)',
           emptyMessage: _gaitEmptyMessage(),
         ),
+    };
+  }
+
+  Map<String, dynamic> _fsrPhaseAnalysis() {
+    List<double> curve(String side, String region) {
+      if (_useFsrDemo) {
+        return _demoFsrCurve(region, isLeft: side == 'left');
+      }
+      return _pairedCurve(side, region);
+    }
+
+    final unit = _fsrSteps['unit']?.toString() ??
+        (_fsrLatest['left'] is Map
+            ? (_fsrLatest['left'] as Map)['unit']?.toString()
+            : null) ??
+        'N_estimated';
+    return {
+      'unit': unit,
+      'healthySide': _fsrSteps['healthySide']?.toString() ?? widget.healthySide,
+      'regions': {
+        for (final region in const ['heel', 'midfoot', 'forefoot'])
+          region: {
+            'left': {'mean': curve('left', region)},
+            'right': {'mean': curve('right', region)},
+          },
+      },
     };
   }
 
@@ -966,14 +1099,12 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
     final dataMax = plottedValues.reduce(max);
     final ySpan = max(1.0, dataMax - dataMin);
     final yPadding = max(2.0, ySpan * 0.12);
-    final isInternalJointAngle = yLabel.contains('khớp');
+    final isFlexionAngle = yLabel.contains('Góc gập');
     final isRelativeLoad = yLabel.contains('tải');
-    final chartMinY = isInternalJointAngle
-        ? max(0.0, dataMin - yPadding)
-        : isRelativeLoad
-            ? 0.0
-            : min(0.0, dataMin - yPadding);
-    final chartMaxY = dataMax + yPadding;
+    final chartMinY =
+        isFlexionAngle || isRelativeLoad ? 0.0 : min(0.0, dataMin - yPadding);
+    final chartMaxY =
+        isFlexionAngle ? max(50.0, dataMax + yPadding) : dataMax + yPadding;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1057,6 +1188,7 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
                   dashed: true,
                 ),
               ],
+              lineTouchData: const LineTouchData(enabled: false),
             ),
             duration: const Duration(milliseconds: 160),
           ),
@@ -1089,8 +1221,7 @@ class _RealtimeChartWorkspaceState extends State<RealtimeChartWorkspace> {
       ),
       color: color,
       barWidth: 2.2,
-      isCurved: true,
-      curveSmoothness: 0.18,
+      isCurved: false,
       dashArray: dashed ? const [7, 5] : null,
       dotData: const FlDotData(show: false),
     );

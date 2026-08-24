@@ -45,7 +45,8 @@ class _TimelineBarState extends State<TimelineBar> {
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 6),
                   ),
                   child: Slider(
                     value: session.playbackSec.clamp(0, maxSec),
@@ -58,7 +59,8 @@ class _TimelineBarState extends State<TimelineBar> {
               ),
               Text(
                 '/ ${maxSec.toStringAsFixed(0)}s',
-                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary),
               ),
             ],
           ),
@@ -73,7 +75,8 @@ class _TimelineBarState extends State<TimelineBar> {
                     backgroundColor: selected
                         ? AppColors.accent.withValues(alpha: 0.15)
                         : Colors.transparent,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -81,7 +84,8 @@ class _TimelineBarState extends State<TimelineBar> {
                     _tabs[i],
                     style: TextStyle(
                       fontSize: 11,
-                      color: selected ? AppColors.accent : AppColors.textSecondary,
+                      color:
+                          selected ? AppColors.accent : AppColors.textSecondary,
                     ),
                   ),
                 ),

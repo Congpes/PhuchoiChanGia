@@ -10,6 +10,21 @@ import numpy as np
 METRICS = ("knee", "hip", "trunk")
 
 
+def _robust_smooth(values: np.ndarray, window: int = 5) -> np.ndarray:
+    """Suppress isolated MediaPipe pose outliers without shifting the gait phase."""
+    if len(values) < window:
+        return values
+    radius = window // 2
+    padded = np.pad(values, radius, mode="edge")
+    median = np.asarray(
+        [np.median(padded[index:index + window]) for index in range(len(values))],
+        dtype=float,
+    )
+    padded_median = np.pad(median, radius, mode="edge")
+    kernel = np.ones(window, dtype=float) / window
+    return np.convolve(padded_median, kernel, mode="valid")
+
+
 def _normalized_interval(
     timestamps: Iterable[float],
     values: Iterable[float],
@@ -20,12 +35,12 @@ def _normalized_interval(
     points = [
         (float(timestamp), float(value))
         for timestamp, value in zip(timestamps, values)
-        if start <= float(timestamp) <= end and np.isfinite(value) and float(value) != 0.0
+        if start <= float(timestamp) <= end and np.isfinite(value)
     ]
     if len(points) < 3 or end <= start:
         return []
     x = np.asarray([item[0] for item in points], dtype=float)
-    y = np.asarray([item[1] for item in points], dtype=float)
+    y = _robust_smooth(np.asarray([item[1] for item in points], dtype=float))
     target = np.linspace(start, end, target_len)
     return np.interp(target, x, y).round(4).tolist()
 
@@ -80,7 +95,7 @@ def _camera_cycle_intervals(
     points = [
         (float(timestamp), float(value))
         for timestamp, value in zip(timestamps, knee_angles)
-        if np.isfinite(timestamp) and np.isfinite(value) and float(value) != 0.0
+        if np.isfinite(timestamp) and np.isfinite(value)
     ]
     if len(points) < 7:
         return []
@@ -89,7 +104,7 @@ def _camera_cycle_intervals(
     y = np.asarray([item[1] for item in points], dtype=float)
     _, reverse_indices = np.unique(x[::-1], return_index=True)
     keep = np.sort(len(x) - 1 - reverse_indices)
-    x, y = x[keep], y[keep]
+    x, y = x[keep], _robust_smooth(y[keep])
     if len(x) < 7 or x[-1] <= x[0]:
         return []
     positive_steps = np.diff(x)
@@ -111,20 +126,20 @@ def _camera_cycle_intervals(
     candidates: List[int] = []
     for index in range(1, len(smoothed) - 1):
         if not (
-            smoothed[index] <= smoothed[index - 1]
-            and smoothed[index] < smoothed[index + 1]
-            and smoothed[index] <= median_angle
+            smoothed[index] >= smoothed[index - 1]
+            and smoothed[index] > smoothed[index + 1]
+            and smoothed[index] >= median_angle
         ):
             continue
         start = max(0, index - local_radius)
         end = min(len(smoothed), index + local_radius + 1)
-        if float(np.max(smoothed[start:end]) - smoothed[index]) >= float(min_flexion_excursion):
+        if float(smoothed[index] - np.min(smoothed[start:end])) >= float(min_flexion_excursion):
             candidates.append(index)
     selected: List[int] = []
     for candidate in candidates:
         if not selected or x[candidate] - x[selected[-1]] >= min_cycle_seconds:
             selected.append(candidate)
-        elif smoothed[candidate] < smoothed[selected[-1]]:
+        elif smoothed[candidate] > smoothed[selected[-1]]:
             selected[-1] = candidate
     intervals = []
     for previous, current in zip(selected, selected[1:]):
@@ -132,6 +147,43 @@ def _camera_cycle_intervals(
         if min_cycle_seconds <= duration <= max_cycle_seconds:
             intervals.append((float(x[previous]), float(x[current])))
     return intervals
+
+
+def _pair_camera_intervals(
+    left_intervals: List[tuple[float, float]],
+    right_intervals: List[tuple[float, float]],
+) -> List[tuple[tuple[float, float], tuple[float, float]]]:
+    """Match contemporaneous left/right cycles without shifting after a miss."""
+    candidates = []
+    for left_index, left in enumerate(left_intervals):
+        left_duration = left[1] - left[0]
+        left_midpoint = (left[0] + left[1]) / 2
+        for right_index, right in enumerate(right_intervals):
+            right_duration = right[1] - right[0]
+            right_midpoint = (right[0] + right[1]) / 2
+            shorter = min(left_duration, right_duration)
+            longer = max(left_duration, right_duration)
+            if shorter <= 0 or longer / shorter > 1.60:
+                continue
+            midpoint_gap = abs(left_midpoint - right_midpoint)
+            if midpoint_gap > 0.75 * longer:
+                continue
+            score = midpoint_gap / longer + abs(left_duration - right_duration) / longer
+            candidates.append((score, left_index, right_index))
+
+    matched_left = set()
+    matched_right = set()
+    pairs = []
+    for _, left_index, right_index in sorted(candidates):
+        if left_index in matched_left or right_index in matched_right:
+            continue
+        matched_left.add(left_index)
+        matched_right.add(right_index)
+        pairs.append((left_intervals[left_index], right_intervals[right_index]))
+    return sorted(
+        pairs,
+        key=lambda pair: max(pair[0][1], pair[1][1]),
+    )
 
 
 def build_camera_gait_cycles(
@@ -163,13 +215,15 @@ def build_camera_gait_cycles(
         )
         for side in ("left", "right")
     }
-    pair_count = min(len(intervals["left"]), len(intervals["right"]))
+    paired_intervals = _pair_camera_intervals(
+        intervals["left"],
+        intervals["right"],
+    )
+    pair_count = len(paired_intervals)
     if pair_count == 0:
         return []
     selected_count = min(pair_count, requested_window)
-    selected_intervals = {
-        side: intervals[side][-selected_count:] for side in ("left", "right")
-    }
+    selected_pairs = paired_intervals[-selected_count:]
     first_pair_index = pair_count - selected_count + 1
     cycles: List[dict] = []
     for offset in range(selected_count):
@@ -182,7 +236,8 @@ def build_camera_gait_cycles(
         }
         valid = True
         for side in ("left", "right"):
-            start, end = selected_intervals[side][offset]
+            interval_index = 0 if side == "left" else 1
+            start, end = selected_pairs[offset][interval_index]
             cycle[side]["start"] = round(start, 4)
             cycle[side]["end"] = round(end, 4)
             cycle[side]["duration"] = round(end - start, 4)

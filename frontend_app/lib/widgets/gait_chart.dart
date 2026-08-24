@@ -46,7 +46,8 @@ class GaitChart extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -60,7 +61,8 @@ class GaitChart extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             yAxisLabel,
-            style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+            style:
+                const TextStyle(fontSize: 10, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 4),
           Expanded(
@@ -68,7 +70,8 @@ class GaitChart extends StatelessWidget {
                 ? const Center(
                     child: Text(
                       'Chưa có dữ liệu — bấm Record để quét',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
                       textAlign: TextAlign.center,
                     ),
                   )
@@ -90,7 +93,10 @@ class GaitChart extends StatelessWidget {
     final secondarySpots =
         secondary != null ? _toSpots(secondary.angles) : <FlSpot>[];
 
-    final allY = [...primary.angles, if (secondary != null) ...secondary.angles];
+    final allY = [
+      ...primary.angles,
+      if (secondary != null) ...secondary.angles
+    ];
     final minY = (allY.reduce((a, b) => a < b ? a : b) - 5).floorToDouble();
     final maxY = (allY.reduce((a, b) => a > b ? a : b) + 5).ceilToDouble();
 
@@ -115,7 +121,8 @@ class GaitChart extends StatelessWidget {
       ),
       titlesData: FlTitlesData(
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles:
+            const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         leftTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
@@ -123,7 +130,8 @@ class GaitChart extends StatelessWidget {
             interval: 20,
             getTitlesWidget: (value, _) => Text(
               value.toInt().toString(),
-              style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
+              style:
+                  const TextStyle(fontSize: 9, color: AppColors.textSecondary),
             ),
           ),
         ),
@@ -134,7 +142,8 @@ class GaitChart extends StatelessWidget {
             interval: 25,
             getTitlesWidget: (value, _) => Text(
               '${value.toInt()}%',
-              style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
+              style:
+                  const TextStyle(fontSize: 9, color: AppColors.textSecondary),
             ),
           ),
         ),

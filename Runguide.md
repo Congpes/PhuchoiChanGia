@@ -36,7 +36,7 @@ Môi trường ảo `backend/venv` không được lưu trên Git. Mỗi máy ch
 ```powershell
 python -m venv backend\venv
 backend\venv\Scripts\python.exe -m pip install --upgrade pip
-backend\venv\Scripts\python.exe -m pip install fastapi==0.139.0 uvicorn==0.50.0 opencv-contrib-python==5.0.0.93 mediapipe==0.10.9 numpy==2.2.6 scipy==1.15.3
+backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 ```
 
 Khởi động backend:
@@ -67,7 +67,7 @@ Mở một terminal khác tại thư mục dự án:
 ```powershell
 cd frontend_app
 flutter pub get
-flutter run -d chrome
+flutter run -d chrome --no-web-resources-cdn
 ```
 
 Phải khởi động backend trước frontend để các luồng MJPEG và API ở cổng `8000` sẵn sàng.
@@ -84,36 +84,50 @@ Nhấn `F5` trong Chrome chỉ tải lại bản JavaScript đã biên dịch g�
 
 Không chạy `flutter clean` thường xuyên. Lệnh này xóa cache và khiến lần build tiếp theo lâu hơn. Chỉ dùng khi cache build thực sự bị lỗi.
 
-## 6. Chế độ một camera hiện tại
+## 6. Cấu hình và đồng bộ hai camera
 
-Backend mặc định chạy chế độ một camera:
+Backend khởi động trước nhưng chỉ mở camera sau khi người dùng chọn thiết bị trong màn hình Scan:
 
-- Camera laptop ở index `0`.
-- Camera laptop là nguồn MediaPipe phân tích dáng đi.
-- Hai endpoint `/video_feed_0` và `/video_feed_1` tạm dùng chung nguồn hình.
-- OpenCV sử dụng DirectShow trên Windows để tránh lỗi MSMF không mở được webcam.
+- Camera chính diện: đặt ngang tầm hông, vuông góc hướng đi; cung cấp nghiêng chậu và số đo mặt phẳng trán.
+- Camera mặt phẳng dọc: đặt ngang tầm hông, quay ngang 90 độ; cung cấp góc gập hông, gối và cổ chân.
+- Hai camera chạy ở `640 × 480`, mục tiêu `30 FPS`; backend ghép khung theo timestamp với sai lệch tối đa `40 ms`.
 
-Không mở đồng thời Zoom, Teams, ứng dụng Camera hoặc phần mềm khác đang chiếm webcam.
+Nhãn `SYNC xx ms` trên Tab Scan chuyển xanh khi hai camera cùng thấy pose và ghép được khung. Không mở đồng thời Zoom, Teams, Camera hoặc phần mềm khác đang chiếm webcam.
 
-## 7. Chuyển sang hai camera sau này
+Nếu chỉ có một camera, chọn chế độ một camera trong hộp cấu hình. Hệ thống vẫn cho xem và ghi dữ liệu 2D nhưng không coi đó là kết quả stereo 3D.
 
-Khi đã gắn đủ hai camera, cấu hình trong PowerShell trước khi chạy backend:
+### Hiệu chuẩn stereo 3D
+
+1. Mở `http://127.0.0.1:8000/camera/calibration/board` và in A4 ngang ở `Actual size 100%`.
+2. Đo một ô vuông, kích thước phải đúng `30 mm`.
+3. Trong Tab Scan chọn `HIỆU CHUẨN 3D`.
+4. Giữ bảng nghiêng khoảng 45 độ để cả hai camera cùng nhìn thấy; chụp ít nhất 12 vị trí và góc khác nhau.
+5. Chọn `Tính calibration`. Calibration chỉ được dùng khi đúng cặp camera và sai số RMS đạt ngưỡng.
+
+Không di chuyển camera sau khi hiệu chuẩn. Nếu camera bị xê dịch, thực hiện hiệu chuẩn lại.
+
+## 7. Kết nối FSR
+
+Backend tự tìm cổng Bluetooth serial chiều đi ra, đọc khung `LL`/`RR` ở `9600 baud` và chuyển ADC sang Newton cho phần phân tích. Có thể cấu hình thủ công trước khi chạy:
 
 ```powershell
-$env:SINGLE_CAMERA_MODE="false"
-$env:CAMERA_FRONTAL_INDEX="0"
-$env:CAMERA_SAGITTAL_INDEX="1"
+$env:FSR_SERIAL_PORTS="COM4,COM6"
+$env:FSR_SERIAL_BAUDRATE="9600"
 backend\venv\Scripts\python.exe backend\main.py
 ```
 
-Quy ước:
+Heatmap dùng ADC để giữ độ tương phản cảm biến; PeakFore và FSI dùng ma trận lực Newton. Nếu mới cắm một chân thì API chỉ báo bên đó kết nối, đây là hành vi bình thường.
 
-- Camera frontal: quay chính diện, dùng đánh giá cân bằng và độ nghiêng xương chậu.
-- Camera sagittal: quay ngang 90 độ, dùng phân tích hông, gối và cổ chân.
+## 8. Chạy nhanh trên Windows
 
-Nếu thứ tự camera trên máy khác nhau, đổi hai giá trị index và chạy lại backend.
+Có thể dùng hai script ở thư mục gốc:
 
-## 8. Khắc phục sự cố
+- `chay_backend.bat`
+- `chay_frontend_nhanh.bat`
+
+Script frontend đã tắt tải tài nguyên Flutter từ CDN để tránh lỗi `Failed to fetch` khi mạng chặn `gstatic.com`.
+
+## 9. Khắc phục sự cố
 
 ### Backend báo `No module named cv2`
 
@@ -141,3 +155,12 @@ backend\venv\Scripts\python.exe backend\main.py
 ### Máy mới không có dữ liệu bệnh nhân
 
 Đây là hành vi bình thường. File SQLite là dữ liệu runtime cục bộ và không được đẩy lên Git. Backend sẽ tạo database mới khi khởi động lần đầu.
+
+## 10. Kiểm thử trước khi commit
+
+```powershell
+backend\venv\Scripts\python.exe -m unittest discover -s backend -p "test_*.py"
+cd frontend_app
+flutter analyze
+flutter test
+```

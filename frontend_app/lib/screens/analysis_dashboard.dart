@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_alert.dart';
 import '../widgets/tab_patients.dart';
 import '../widgets/tab_prepare_session.dart';
 import '../widgets/tab_scan.dart';
@@ -33,29 +34,7 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
   }
 
   void _showBlockedMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: Colors.redAccent,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        content: Row(
-          children: [
-            const Icon(Icons.lock_outline, color: Colors.white),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    fontSize: 13),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    AppAlert.show(context, message, tone: AppAlertTone.error);
   }
 
   void _handleMenuSelection(
@@ -182,9 +161,9 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
               child: const Icon(accountIcon, size: 12, color: AppColors.accent),
             ),
             const SizedBox(width: 8),
-            Text(
+            const Text(
               'K\u1ef9 thu\u1eadt vi\u00ean',
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary),
@@ -336,15 +315,15 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
         controller: _tabController,
         physics:
             const NeverScrollableScrollPhysics(), // prevent swiping gestures during active workflows
-        children: [
-          const TabPatients(),
-          const TabPrepareSession(),
-          const TabScan(),
-          const TabAnalysis(),
-          const TabHistory(),
-          const Center(child: Text('Tab 6: Chọn bài tập (Để sau)')),
-          const Center(child: Text('Tab 7: Luyện tập phục hồi (Để sau)')),
-          const Center(child: Text('Tab 8: Tổng kết luyện tập (Để sau)')),
+        children: const [
+          TabPatients(),
+          TabPrepareSession(),
+          TabScan(),
+          TabAnalysis(),
+          TabHistory(),
+          Center(child: Text('Tab 6: Chọn bài tập (Để sau)')),
+          Center(child: Text('Tab 7: Luyện tập phục hồi (Để sau)')),
+          Center(child: Text('Tab 8: Tổng kết luyện tập (Để sau)')),
         ],
       ),
     );

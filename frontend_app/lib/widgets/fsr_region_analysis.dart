@@ -19,6 +19,7 @@ class FsrRegionAnalysis extends StatefulWidget {
 class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
   Map<String, dynamic>? _data;
   int _windowSize = 7;
+  int _activeRegion = 0;
   bool _loading = false;
   String? _error;
 
@@ -147,30 +148,40 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
           ),
         ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 940 ? 2 : 1;
-              return GridView.builder(
-                padding: const EdgeInsets.all(12),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  mainAxisExtent: 300,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('VÙNG BÀN CHÂN',
+                    style:
+                        TextStyle(fontSize: 10, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 5),
+                Wrap(
+                  spacing: 7,
+                  children: List.generate(items.length, (index) {
+                    const labels = ['GÓT', 'GIỮA BÀN CHÂN', 'TRƯỚC BÀN CHÂN'];
+                    return ChoiceChip(
+                      selected: index == _activeRegion,
+                      label: Text(labels[index],
+                          style: const TextStyle(fontSize: 9)),
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() => _activeRegion = index),
+                    );
+                  }),
                 ),
-                itemCount: items.length,
-                itemBuilder: (_, index) {
-                  final item = items[index];
-                  return _RegionChartCard(
-                    title: item.$2,
-                    region: regions[item.$1],
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _RegionChartCard(
+                    title: items[_activeRegion].$2,
+                    region: regions[items[_activeRegion].$1],
                     unit: _data?['unit']?.toString() ?? 'relative_load',
                     leftLabel: sideLabel('left'),
                     rightLabel: sideLabel('right'),
-                  );
-                },
-              );
-            },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -398,7 +409,7 @@ class _RegionLineChart extends StatelessWidget {
             ),
           ),
         ),
-        lineTouchData: const LineTouchData(enabled: true),
+        lineTouchData: const LineTouchData(enabled: false),
       ),
       duration: const Duration(milliseconds: 180),
     );

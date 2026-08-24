@@ -11,6 +11,43 @@ import numpy as np
 
 REGIONS = ("total", "heel", "midfoot", "forefoot")
 VALID_WINDOWS = (5, 7)
+PEAK_FORE_FALLBACK_START_PERCENT = 65.0
+
+
+def force_symmetry_index(left_peak: float, right_peak: float) -> Optional[float]:
+    """Return a force symmetry score where 100% means perfectly symmetric."""
+    maximum = max(float(left_peak), float(right_peak))
+    if maximum <= 0:
+        return None
+    return round(100.0 * min(float(left_peak), float(right_peak)) / maximum, 2)
+
+
+def _peak_fore_metrics(curve: List[float]) -> dict:
+    """Measure forefoot peak in terminal stance when heel-off is unavailable.
+
+    The current FSR stream does not explicitly label heel-off.  We therefore
+    use the final 35% of the normalised stance as the documented fallback for
+    push-off and keep the method in the returned record.
+    """
+    if not curve:
+        return {
+            "peakFore": 0.0,
+            "peakForePhasePercent": None,
+            "peakForeStartPercent": PEAK_FORE_FALLBACK_START_PERCENT,
+            "peakForeMethod": "terminal_stance_fallback",
+        }
+    final_index = max(0, len(curve) - 1)
+    start_index = int(round(final_index * PEAK_FORE_FALLBACK_START_PERCENT / 100.0))
+    push_off_curve = curve[start_index:] or curve
+    peak_value = max(push_off_curve)
+    peak_index = start_index + push_off_curve.index(peak_value)
+    phase_percent = 0.0 if final_index == 0 else 100.0 * peak_index / final_index
+    return {
+        "peakFore": round(float(peak_value), 4),
+        "peakForePhasePercent": round(phase_percent, 2),
+        "peakForeStartPercent": PEAK_FORE_FALLBACK_START_PERCENT,
+        "peakForeMethod": "terminal_stance_fallback",
+    }
 
 
 def _normalize(values: Iterable[float], target_len: int = 101) -> List[float]:
@@ -47,8 +84,9 @@ class FsrStepPipeline:
         self,
         *,
         window_size: int = 5,
-        contact_on: float = 7000.0,
-        contact_off: float = 3500.0,
+        # Legacy thresholds were 7000 g / 3500 g. Input is now Newton.
+        contact_on: float = 68.65,
+        contact_off: float = 34.32,
         min_duration: float = 0.25,
         max_duration: float = 2.0,
         min_samples: int = 5,
@@ -162,6 +200,7 @@ class FsrStepPipeline:
             "duration": round(duration, 4),
             "sampleCount": len(samples),
             "curves": curves,
+            **_peak_fore_metrics(curves["forefoot"]),
         }
         self._unpaired[side].append(step)
         self._pair_available_steps()
@@ -171,10 +210,20 @@ class FsrStepPipeline:
             left = self._unpaired["left"].popleft()
             right = self._unpaired["right"].popleft()
             self._pair_sequence += 1
+            pair_index = self._pair_sequence
+            left["pairIndex"] = pair_index
+            right["pairIndex"] = pair_index
+            left_peak = float(left.get("peakFore", 0.0))
+            right_peak = float(right.get("peakFore", 0.0))
+            fsi = force_symmetry_index(left_peak, right_peak)
             self._pairs.append({
-                "pairIndex": self._pair_sequence,
+                "pairIndex": pair_index,
                 "left": left,
                 "right": right,
+                "peakForeLeft": round(left_peak, 4),
+                "peakForeRight": round(right_peak, 4),
+                "fsi": fsi,
+                "asymmetry": None if fsi is None else round(100.0 - fsi, 2),
             })
 
     def all_pairs(self) -> List[dict]:
@@ -183,13 +232,21 @@ class FsrStepPipeline:
 
     def snapshot(self, *, healthy_leg: str = "LEFT", prosthetic_leg: str = "RIGHT") -> dict:
         pairs = list(self._pairs)[-self.window_size :]
+        latest_pair = pairs[-1] if pairs else None
         return {
+            "unit": "N_estimated",
+            "forceSource": "formula_estimate",
             "windowSize": self.window_size,
             "windowOptions": list(VALID_WINDOWS),
             "availablePairs": len(pairs),
-            "latestPairIndex": pairs[-1]["pairIndex"] if pairs else None,
+            "latestPairIndex": latest_pair["pairIndex"] if latest_pair else None,
             "healthySide": healthy_leg.lower(),
             "prostheticSide": prosthetic_leg.lower(),
+            "peakFore": {
+                "left": latest_pair.get("peakForeLeft", 0.0) if latest_pair else 0.0,
+                "right": latest_pair.get("peakForeRight", 0.0) if latest_pair else 0.0,
+            },
+            "fsi": latest_pair.get("fsi") if latest_pair else None,
             "pairs": pairs,
             "status": {
                 "active": {name: side.active for name, side in self._sides.items()},
@@ -226,8 +283,27 @@ class FsrStepPipeline:
                     "steps": len(curves),
                 }
             regions[region] = region_result
+        peak_fore_pairs = [
+            {
+                "pairIndex": pair["pairIndex"],
+                "left": {
+                    "stepIndex": pair["left"].get("sideIndex"),
+                    "peakFore": pair.get("peakForeLeft", 0.0),
+                    "peakForePhasePercent": pair["left"].get("peakForePhasePercent"),
+                },
+                "right": {
+                    "stepIndex": pair["right"].get("sideIndex"),
+                    "peakFore": pair.get("peakForeRight", 0.0),
+                    "peakForePhasePercent": pair["right"].get("peakForePhasePercent"),
+                },
+                "fsi": pair.get("fsi"),
+                "asymmetry": pair.get("asymmetry"),
+            }
+            for pair in selected
+        ]
         return {
-            "unit": "relative_load",
+            "unit": "N_estimated",
+            "forceSource": "formula_estimate",
             "windowSize": self.window_size,
             "windowOptions": list(VALID_WINDOWS),
             "pairCount": len(selected),
@@ -236,5 +312,5 @@ class FsrStepPipeline:
             # Keep normalized pairs so saved clips can be recalculated for 5/7.
             "pairs": selected,
             "regions": regions,
+            "peakForePairs": peak_fore_pairs,
         }
-

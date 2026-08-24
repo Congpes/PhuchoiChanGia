@@ -2,7 +2,6 @@ enum LegSide { left, right }
 
 enum SessionPhase { setup, baseline, scan1, analyze, adjust, scan2, report }
 
-
 class GaitCycleCurve {
   const GaitCycleCurve({
     required this.label,
@@ -101,8 +100,10 @@ class ScanResult {
       pelvicTilt: pelvicTilt ?? this.pelvicTilt,
       cadence: cadence ?? this.cadence,
       strideLength: strideLength ?? this.strideLength,
-      actualAdjustmentDegrees: actualAdjustmentDegrees ?? this.actualAdjustmentDegrees,
-      actualAdjustmentNotes: actualAdjustmentNotes ?? this.actualAdjustmentNotes,
+      actualAdjustmentDegrees:
+          actualAdjustmentDegrees ?? this.actualAdjustmentDegrees,
+      actualAdjustmentNotes:
+          actualAdjustmentNotes ?? this.actualAdjustmentNotes,
       recordedAt: recordedAt ?? this.recordedAt,
       plantarLoadSymmetry: plantarLoadSymmetry ?? this.plantarLoadSymmetry,
       copTrajectory: copTrajectory ?? this.copTrajectory,

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_alert.dart';
 import '../models/gait_data.dart';
+
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import 'gait_chart.dart';
@@ -144,17 +146,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('ROM Gập duỗi gối',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getROM(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getROM(scan1, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getROM(scan2, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(
@@ -170,17 +172,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('Góc gập lớn nhất (Flexion)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakFlexion(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakFlexion(scan1, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakFlexion(scan2, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(
@@ -196,17 +198,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('Góc duỗi thẳng nhất (Extension)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakExtension(session.baseline, side == LegSide.left ? LegSide.right : LegSide.left).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakExtension(scan1, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPeakExtension(scan2, side).toStringAsFixed(0)}°',
                                   style: const TextStyle(
@@ -222,17 +224,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('Độ dao động hông (Pelvic Sway)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPelvicSway(session.baseline).toStringAsFixed(1)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPelvicSway(scan1).toStringAsFixed(1)}°',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${_getPelvicSway(scan2).toStringAsFixed(1)}°',
                                   style: const TextStyle(
@@ -248,17 +250,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('Nhịp bước (Cadence)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${session.baseline?.cadence?.toStringAsFixed(0) ?? "N/A"} b/p',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${scan1?.cadence?.toStringAsFixed(0) ?? "N/A"} b/p',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${scan2?.cadence?.toStringAsFixed(0) ?? "N/A"} b/p',
                                   style: const TextStyle(
@@ -274,17 +276,17 @@ class _TabHistoryState extends State<TabHistory> {
                               child: Text('Sải chân (Stride Length)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${session.baseline?.strideLength?.toStringAsFixed(2) ?? "N/A"} m',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${scan1?.strideLength?.toStringAsFixed(2) ?? "N/A"} m',
                                   style: const TextStyle(fontSize: 11))),
                           Padding(
-                              padding: EdgeInsets.all(8),
+                              padding: const EdgeInsets.all(8),
                               child: Text(
                                   '${scan2?.strideLength?.toStringAsFixed(2) ?? "N/A"} m',
                                   style: const TextStyle(
@@ -354,10 +356,10 @@ class _TabHistoryState extends State<TabHistory> {
             FilledButton.icon(
               onPressed: () {
                 Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text(
-                          'Đang kết nối máy in để xuất bản báo cáo PDF...')),
+                AppAlert.show(
+                  context,
+                  'Đang kết nối máy in để xuất bản báo cáo PDF...',
+                  tone: AppAlertTone.info,
                 );
               },
               icon: const Icon(Icons.print, size: 16),
@@ -552,9 +554,9 @@ class _TabHistoryState extends State<TabHistory> {
                               color: AppColors.textPrimary),
                         ),
                         const SizedBox(height: 4),
-                        Text(
+                        const Text(
                           'Mô tả trực quan so sánh Before / After (trước và sau khi căn chỉnh kỹ thuật).',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
@@ -597,12 +599,12 @@ class _TabHistoryState extends State<TabHistory> {
                                               color: AppColors.border)),
                                     ),
                                     width: double.infinity,
-                                    child: Row(
+                                    child: const Row(
                                       children: [
-                                        const Icon(Icons.show_chart,
+                                        Icon(Icons.show_chart,
                                             color: AppColors.accent, size: 18),
-                                        const SizedBox(width: 8),
-                                        const Text(
+                                        SizedBox(width: 8),
+                                        Text(
                                           'Đồ thị so sánh: Trước chỉnh (Đỏ) vs Sau chỉnh (Xanh liền)',
                                           style: TextStyle(
                                               fontWeight: FontWeight.bold,

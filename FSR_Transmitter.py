@@ -152,6 +152,10 @@ class FSRTransmitterApp:
         self.active_channels = set()
         self.detected_sides = {}
         self.frame_counts = {1: 0, 2: 0}
+        self.ema_alpha = tk.DoubleVar(value=0.20)
+        self.ema_alpha_value = 0.20
+        self.ema_label_text = tk.StringVar(value='EMA alpha: 0.20')
+        self.smoothed_matrices = {}
 
         self.preview_state = {
             "left": {"rects": [], "texts": [], "shape": (0, 0), "size": (0, 0)},
@@ -274,6 +278,14 @@ class FSRTransmitterApp:
             connection, textvariable=self.unit, values=("raw_adc", "newton"), width=15, state="readonly"
         ).grid(row=1, column=3, pady=(10, 0), sticky="w")
 
+        ttk.Label(connection, textvariable=self.ema_label_text).grid(
+            row=1, column=4, pady=(10, 0), padx=(12, 5), sticky='e'
+        )
+        ttk.Scale(
+            connection, from_=0.01, to=1.0, variable=self.ema_alpha,
+            command=self._on_alpha_change,
+        ).grid(row=1, column=5, columnspan=3, pady=(10, 0), sticky='ew')
+
         body = ttk.Frame(container)
         body.pack(fill=tk.BOTH, expand=True, pady=12)
 
@@ -320,6 +332,31 @@ class FSRTransmitterApp:
         empty_matrix = [[0.0] * 4 for _ in range(12)]
         self.root.after(80, self.draw_matrix, empty_matrix, "left")
         self.root.after(80, self.draw_matrix, empty_matrix, "right")
+
+    def _on_alpha_change(self, value):
+        self.ema_alpha_value = min(max(float(value), 0.01), 1.0)
+        self.ema_label_text.set(f'EMA alpha: {self.ema_alpha_value:.2f}')
+
+    def _apply_ema_filter(self, channel_id, matrix):
+        previous = self.smoothed_matrices.get(channel_id)
+        if (
+            previous is None
+            or len(previous) != len(matrix)
+            or len(previous[0]) != len(matrix[0])
+        ):
+            filtered = [row[:] for row in matrix]
+        else:
+            alpha = self.ema_alpha_value
+            filtered = [
+                [
+                    alpha * value
+                    + (1.0 - alpha) * previous[row_index][column_index]
+                    for column_index, value in enumerate(row)
+                ]
+                for row_index, row in enumerate(matrix)
+            ]
+        self.smoothed_matrices[channel_id] = filtered
+        return [row[:] for row in filtered]
 
     def refresh_com_ports(self):
         boxes = (self.com_box_1, self.com_box_2)
@@ -506,6 +543,7 @@ class FSRTransmitterApp:
             return
 
         self.running = True
+        self.smoothed_matrices.clear()
         self.detected_sides.clear()
         self.frame_counts = {1: 0, 2: 0}
         self.active_channels = {settings[0] for settings in serial_settings_list}
@@ -536,6 +574,7 @@ class FSRTransmitterApp:
 
     def _stop_stream(self, status_text=None):
         self.running = False
+        self.smoothed_matrices.clear()
         with self.serial_lock:
             connections = list(self.serial_connections.values())
             self.serial_connections.clear()
@@ -629,6 +668,7 @@ class FSRTransmitterApp:
                     matrix, frame_side = parse_hardware_frame(
                         values, active_side, rows, columns
                     )
+                    matrix = self._apply_ema_filter(channel_id, matrix)
                     current_packet_settings = (
                         packet_settings[0], frame_side, packet_settings[2]
                     )

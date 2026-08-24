@@ -3,14 +3,22 @@ import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../theme/app_theme.dart';
 
 class GaitCycleAnalysis extends StatefulWidget {
-  const GaitCycleAnalysis({super.key, required this.scanId});
+  const GaitCycleAnalysis({
+    super.key,
+    this.scanId,
+    this.assetPath,
+    this.healthySideOverride,
+  }) : assert(scanId != null || assetPath != null);
 
-  final String scanId;
+  final String? scanId;
+  final String? assetPath;
+  final String? healthySideOverride;
 
   @override
   State<GaitCycleAnalysis> createState() => _GaitCycleAnalysisState();
@@ -19,6 +27,7 @@ class GaitCycleAnalysis extends StatefulWidget {
 class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
   Map<String, dynamic>? _data;
   int _windowSize = 7;
+  int _activeMetric = 0;
   bool _loading = false;
   String? _error;
 
@@ -31,7 +40,11 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
   @override
   void didUpdateWidget(covariant GaitCycleAnalysis oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scanId != widget.scanId) _load();
+    if (oldWidget.scanId != widget.scanId ||
+        oldWidget.assetPath != widget.assetPath ||
+        oldWidget.healthySideOverride != widget.healthySideOverride) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -40,19 +53,91 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
       _error = null;
     });
     try {
-      final response = await http.get(Uri.parse(
-        'http://127.0.0.1:8000/scans/${widget.scanId}/gait-analysis?window=$_windowSize',
-      ));
-      if (response.statusCode != 200) {
-        throw Exception('Backend trả mã ${response.statusCode}');
+      late final Map<String, dynamic> decoded;
+      if (widget.assetPath != null) {
+        final source = await rootBundle.loadString(widget.assetPath!);
+        decoded = _windowedAssetData(
+          jsonDecode(source) as Map<String, dynamic>,
+        );
+      } else {
+        final response = await http.get(Uri.parse(
+          'http://127.0.0.1:8000/scans/${widget.scanId}/gait-analysis?window=$_windowSize',
+        ));
+        if (response.statusCode != 200) {
+          throw Exception('Backend trả mã ${response.statusCode}');
+        }
+        decoded = jsonDecode(response.body) as Map<String, dynamic>;
       }
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (mounted) setState(() => _data = decoded);
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Map<String, dynamic> _windowedAssetData(Map<String, dynamic> raw) {
+    final source = raw['cycles'];
+    final allCycles = source is List
+        ? source.whereType<Map>().map(Map<String, dynamic>.from).toList()
+        : <Map<String, dynamic>>[];
+    final start = max(0, allCycles.length - _windowSize);
+    final cycles = allCycles.sublist(start);
+    const metricNames = ['knee', 'hip', 'trunk'];
+    final metrics = <String, dynamic>{};
+
+    for (final metric in metricNames) {
+      final sides = <String, dynamic>{};
+      for (final side in const ['left', 'right']) {
+        final curves = <List<double>>[];
+        for (final cycle in cycles) {
+          final sideData = cycle[side];
+          final curveMap = sideData is Map ? sideData['curves'] : null;
+          final values = curveMap is Map ? curveMap[metric] : null;
+          if (values is List) {
+            curves.add(
+              values.whereType<num>().map((value) => value.toDouble()).toList(),
+            );
+          }
+        }
+        final pointCount =
+            curves.isEmpty ? 0 : curves.map((item) => item.length).reduce(min);
+        final mean = List<double>.generate(pointCount, (index) {
+          return curves.fold<double>(
+                0,
+                (sum, curve) => sum + curve[index],
+              ) /
+              curves.length;
+        });
+        final sd = List<double>.generate(pointCount, (index) {
+          if (curves.length < 2) return 0;
+          final variance = curves.fold<double>(
+                0,
+                (sum, curve) => sum + pow(curve[index] - mean[index], 2),
+              ) /
+              (curves.length - 1);
+          return sqrt(variance);
+        });
+        sides[side] = {
+          'mean': mean,
+          'sd': sd,
+          'cycles': curves.length,
+        };
+      }
+      metrics[metric] = sides;
+    }
+
+    final result = Map<String, dynamic>.from(raw)
+      ..['cycles'] = cycles
+      ..['cycleCount'] = cycles.length
+      ..['windowSize'] = _windowSize
+      ..['metrics'] = metrics;
+    final healthy = widget.healthySideOverride?.toLowerCase();
+    if (healthy == 'left' || healthy == 'right') {
+      result['healthySide'] = healthy;
+      result['prostheticSide'] = healthy == 'left' ? 'right' : 'left';
+    }
+    return result;
   }
 
   @override
@@ -67,7 +152,9 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
     if (metrics is! Map || metrics.isEmpty) {
       return const Center(
         child: Text(
-          'Clip này chưa đủ chu kỳ camera đồng bộ với FSR.',
+          'Clip này chưa đủ chu kỳ camera hợp lệ.\n'
+          'Hãy ghi ít nhất 2 chu kỳ; nên dùng 5 hoặc 7 chu kỳ để tính Mean ± SD ổn định.',
+          textAlign: TextAlign.center,
           style: TextStyle(color: AppColors.textSecondary),
         ),
       );
@@ -84,6 +171,8 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
       ('trunk', 'GÓC NGHIÊNG THÂN TRƯỚC–SAU - PHÂN TÍCH'),
     ];
     final count = (_data?['cycleCount'] as num?)?.toInt() ?? 0;
+    final rejectedFrames =
+        (_data?['rejectedSampleCount'] as num?)?.toInt() ?? 0;
     return Column(
       children: [
         Container(
@@ -105,6 +194,19 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
                     const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
               ),
               const Spacer(),
+              if (rejectedFrames > 0) ...[
+                const Icon(Icons.visibility_off_outlined,
+                    size: 13, color: AppColors.warning),
+                const SizedBox(width: 4),
+                Text(
+                  'Đã loại $rejectedFrames frame visibility < 0,80',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    color: AppColors.warning,
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               const Text('Cửa sổ phân tích',
                   style:
                       TextStyle(fontSize: 9, color: AppColors.textSecondary)),
@@ -131,32 +233,44 @@ class _GaitCycleAnalysisState extends State<GaitCycleAnalysis> {
           ),
         ),
         Expanded(
-          child: LayoutBuilder(builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 940 ? 2 : 1;
-            return GridView.builder(
-              padding: const EdgeInsets.all(12),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                mainAxisExtent: 300,
-              ),
-              itemCount: items.length,
-              itemBuilder: (_, index) {
-                final item = items[index];
-                return _GaitChartCard(
-                  title: item.$2,
-                  metric: metrics[item.$1],
-                  leftLabel: item.$1 == 'trunk'
-                      ? 'Theo chu kỳ chân trái'
-                      : sideLabel('left'),
-                  rightLabel: item.$1 == 'trunk'
-                      ? 'Theo chu kỳ chân phải'
-                      : sideLabel('right'),
-                );
-              },
-            );
-          }),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('BIỂU ĐỒ CHU KỲ',
+                    style:
+                        TextStyle(fontSize: 10, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 5),
+                Wrap(
+                  spacing: 7,
+                  children: List.generate(items.length, (index) {
+                    final item = items[index];
+                    return ChoiceChip(
+                      selected: index == _activeMetric,
+                      label: Text(item.$2.split(' - ').first,
+                          style: const TextStyle(fontSize: 9)),
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() => _activeMetric = index),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _GaitChartCard(
+                    title: items[_activeMetric].$2,
+                    metric: metrics[items[_activeMetric].$1],
+                    leftLabel: items[_activeMetric].$1 == 'trunk'
+                        ? 'Theo chu kỳ chân trái'
+                        : sideLabel('left'),
+                    rightLabel: items[_activeMetric].$1 == 'trunk'
+                        ? 'Theo chu kỳ chân phải'
+                        : sideLabel('right'),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );
@@ -224,9 +338,9 @@ class _GaitChartCard extends StatelessWidget {
               left: left,
               right: right,
               yLabel: title.contains('GỐI')
-                  ? 'Góc trong khớp gối 2D (°)'
+                  ? 'Góc gập khớp gối 2D (°)'
                   : title.contains('HÔNG')
-                      ? 'Góc trong khớp hông 2D (°)'
+                      ? 'Góc gập khớp hông 2D (°)'
                       : 'Góc nghiêng thân trước–sau (°)',
             ),
           ),

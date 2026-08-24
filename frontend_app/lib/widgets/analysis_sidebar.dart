@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_alert.dart';
 import '../models/gait_data.dart';
+
 import '../providers/session_provider.dart';
 import '../config/measurement_config.dart';
 import '../theme/app_theme.dart';
@@ -57,7 +59,8 @@ class AnalysisSidebar extends StatelessWidget {
                 const _SectionTitle('Cấu hình'),
                 _LegSelector(
                   label: 'Chân lành',
-                  leftSelected: provider.activePatient?.healthyLeg == LegSide.left,
+                  leftSelected:
+                      provider.activePatient?.healthyLeg == LegSide.left,
                   onLeft: () {},
                   onRight: () {},
                 ),
@@ -67,13 +70,15 @@ class AnalysisSidebar extends StatelessWidget {
                 _RecordingControl(provider: provider, session: session),
                 const SizedBox(height: 12),
                 const _SectionTitle('Đề xuất tinh chỉnh'),
-                ...session.recommendations.map((r) => _RecommendationCard(r: r)),
+                ...session.recommendations
+                    .map((r) => _RecommendationCard(r: r)),
                 if (session.recommendations.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Text(
                       'Quét xong sẽ hiện gợi ý chỉnh chân trái/phải.',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ),
                 if (provider.comparisonSummary != null) ...[
@@ -83,11 +88,13 @@ class AnalysisSidebar extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
                       provider.comparisonSummary!,
-                      style: const TextStyle(fontSize: 11, color: AppColors.accentGreen),
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.accentGreen),
                     ),
                   ),
                 ],
-                if (session.phase == SessionPhase.analyze && session.scan1 != null)
+                if (session.phase == SessionPhase.analyze &&
+                    session.scan1 != null)
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: FilledButton.icon(
@@ -103,11 +110,11 @@ class AnalysisSidebar extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(8),
             child: OutlinedButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Xuất báo cáo — sẽ tích hợp ở bước sau')),
-                );
-              },
+              onPressed: () => AppAlert.show(
+                context,
+                'Xuất báo cáo — sẽ tích hợp ở bước sau',
+                tone: AppAlertTone.info,
+              ),
               icon: const Icon(Icons.summarize_outlined, size: 18),
               label: const Text('Report'),
             ),
@@ -134,7 +141,8 @@ class _Header extends StatelessWidget {
                   color: AppColors.accent.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Icon(Icons.accessibility_new, color: AppColors.accent, size: 22),
+                child: const Icon(Icons.accessibility_new,
+                    color: AppColors.accent, size: 22),
               ),
               const SizedBox(width: 10),
               const Expanded(
@@ -143,11 +151,13 @@ class _Header extends StatelessWidget {
                   children: [
                     Text(
                       'AI-ProGait',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                     Text(
                       'Dashboard Analysis',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -210,7 +220,9 @@ class _PhaseTile extends StatelessWidget {
         size: 18,
         color: isCurrent ? AppColors.accent : AppColors.textSecondary,
       ),
-      title: Text(label, style: TextStyle(fontSize: 13, color: enabled ? null : AppColors.textSecondary)),
+      title: Text(label,
+          style: TextStyle(
+              fontSize: 13, color: enabled ? null : AppColors.textSecondary)),
       selected: isCurrent,
       selectedTileColor: AppColors.accent.withValues(alpha: 0.12),
       onTap: enabled ? onTap : null,
@@ -254,7 +266,9 @@ class _LegSelector extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -311,7 +325,10 @@ class _LegChip extends StatelessWidget {
             border: Border.all(color: selected ? color : AppColors.border),
           ),
           alignment: Alignment.center,
-          child: Text(label, style: TextStyle(fontSize: 12, color: selected ? color : AppColors.textSecondary)),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: selected ? color : AppColors.textSecondary)),
         ),
       ),
     );
@@ -331,7 +348,8 @@ class _ProstheticSelector extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Chân giả', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          const Text('Chân giả',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           DropdownButtonFormField<LegSide>(
             initialValue: patient?.prostheticLeg,
@@ -341,8 +359,10 @@ class _ProstheticSelector extends StatelessWidget {
               border: OutlineInputBorder(),
             ),
             items: const [
-              DropdownMenuItem(value: LegSide.left, child: Text('Chân trái (giả)')),
-              DropdownMenuItem(value: LegSide.right, child: Text('Chân phải (giả)')),
+              DropdownMenuItem(
+                  value: LegSide.left, child: Text('Chân trái (giả)')),
+              DropdownMenuItem(
+                  value: LegSide.right, child: Text('Chân phải (giả)')),
             ],
             onChanged: (v) {},
           ),
@@ -360,7 +380,8 @@ class _RecordingControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = MeasurementConfig.recordingDurationSec - session.recordingElapsedSec;
+    final remaining =
+        MeasurementConfig.recordingDurationSec - session.recordingElapsedSec;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -369,7 +390,8 @@ class _RecordingControl extends StatelessWidget {
         children: [
           if (session.isRecording)
             LinearProgressIndicator(
-              value: session.recordingElapsedSec / MeasurementConfig.recordingDurationSec,
+              value: session.recordingElapsedSec /
+                  MeasurementConfig.recordingDurationSec,
               backgroundColor: AppColors.border,
               color: AppColors.critical,
             ),
@@ -382,11 +404,16 @@ class _RecordingControl extends StatelessWidget {
               ),
             ),
           FilledButton.icon(
-            onPressed: session.isRecording ? provider.stopRecording : provider.startRecording,
+            onPressed: session.isRecording
+                ? provider.stopRecording
+                : provider.startRecording,
             style: FilledButton.styleFrom(
-              backgroundColor: session.isRecording ? AppColors.warning : AppColors.accent,
+              backgroundColor:
+                  session.isRecording ? AppColors.warning : AppColors.accent,
             ),
-            icon: Icon(session.isRecording ? Icons.stop : Icons.fiber_manual_record, size: 18),
+            icon: Icon(
+                session.isRecording ? Icons.stop : Icons.fiber_manual_record,
+                size: 18),
             label: Text(session.isRecording ? 'Dừng quét' : 'Record (10s)'),
           ),
         ],
@@ -421,7 +448,8 @@ class _RecommendationCard extends StatelessWidget {
         children: [
           Text(
             r.issue,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+            style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: color),
           ),
           const SizedBox(height: 4),
           Text(r.suggestion, style: const TextStyle(fontSize: 11)),

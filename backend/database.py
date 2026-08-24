@@ -58,6 +58,27 @@ def init_db():
     );
     """)
     
+    # One row represents the immutable pair of source videos created by a
+    # continuous recording. Analysis segments only store offsets into these
+    # files, so the originals remain available after changing tabs or
+    # restarting the application.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS recording_archives (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        frontal_video_id TEXT NOT NULL,
+        sagittal_video_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        stopped_at TEXT,
+        duration_sec REAL NOT NULL DEFAULT 0,
+        frontal_frame_count INTEGER NOT NULL DEFAULT 0,
+        sagittal_frame_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT CHECK(status IN ('recording', 'complete', 'interrupted'))
+            NOT NULL DEFAULT 'recording',
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+    """)
+
     # Create Scans Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS scans (
@@ -144,7 +165,7 @@ def init_db():
     
     # Keep schema changes explicit and traceable. Future migrations should bump
     # this value after applying their ALTER/CREATE statements transactionally.
-    cursor.execute("PRAGMA user_version = 1;")
+    cursor.execute("PRAGMA user_version = 2;")
 
     # Index foreign keys and common history lookups. SQLite does not create
     # indexes automatically for child-key columns.
@@ -152,6 +173,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_session ON scans(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_segment ON scans(segment_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recording_archives_session ON recording_archives(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_patient ON clinical_notes(patient_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_session ON clinical_notes(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempts_patient ON practice_attempts(patient_id);")

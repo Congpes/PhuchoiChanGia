@@ -12,7 +12,9 @@ def calculate_angle(a, b, c):
         angle = abs(radians * 180.0 / math.pi)
         if angle > 180.0:
             angle = 360.0 - angle
-        return int(angle)
+        # Keep sub-degree changes. Integer truncation creates stair-step
+        # curves and can hide small but real knee/hip motion.
+        return round(float(angle), 3)
     except Exception:
         return 0
 
@@ -87,7 +89,8 @@ def analyze_cropped_segment(
     recorded_left_ankle, recorded_right_ankle,
     recorded_left_hip, recorded_right_hip,
     recorded_pelvic_tilt,
-    healthy_leg, active_session_id
+    healthy_leg, active_session_id,
+    recorded_pose_quality=None,
 ):
     indices = [i for i, t in enumerate(recorded_timestamps) if start_t <= t <= end_t]
     if not indices:
@@ -95,6 +98,23 @@ def analyze_cropped_segment(
         
     if not indices:
         raise ValueError("Không có dữ liệu camera trong đoạn thời gian được chọn")
+
+    if recorded_pose_quality is not None:
+        indices = [
+            index
+            for index in indices
+            if index >= len(recorded_pose_quality)
+            or bool(
+                recorded_pose_quality[index].get(
+                    "targetLegReliable",
+                    recorded_pose_quality[index].get("frameReliable", True),
+                )
+            )
+        ]
+        if not indices:
+            raise ValueError(
+                "Không có frame đạt visibility 0,80 cho chân giả trong đoạn đã chọn"
+            )
         
     s_l_knee = [recorded_left_knee[i] for i in indices]
     s_r_knee = [recorded_right_knee[i] for i in indices]

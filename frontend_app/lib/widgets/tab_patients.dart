@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_alert.dart';
 import '../models/gait_data.dart';
+
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 
@@ -161,10 +163,15 @@ class _PatientListPanelState extends State<_PatientListPanel> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Hồ sơ bệnh nhân',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                const Expanded(
+                  child: Text(
+                    'Hồ sơ bệnh nhân',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
                 ),
+                const SizedBox(width: 8),
                 IconButton(
                   tooltip: 'Thêm bệnh án mới',
                   style: IconButton.styleFrom(
@@ -449,17 +456,14 @@ class _ClinicalActionCardState extends State<_ClinicalActionCard> {
     setState(() => _isCreatingSession = true);
     try {
       await widget.provider.startNewSession();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: AppColors.accent,
-            content: Text(
-                'Khởi tạo phiên kiểm định mới thành công! Đang chuyển hướng...'),
-          ),
-        );
-      }
+      if (!context.mounted) return;
+      AppAlert.show(
+        context,
+        'Khởi tạo phiên kiểm định mới thành công! Đang chuyển hướng...',
+        tone: AppAlertTone.success,
+      );
     } catch (e) {
-      if (mounted) {
+      if (context.mounted) {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
@@ -615,14 +619,15 @@ class AddPatientDialogState extends State<AddPatientDialog> {
         _prostheticLeg,
       );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Tạo hồ sơ bệnh án thành công!')),
-        );
-        Navigator.of(context).pop();
-      }
+      if (!context.mounted) return;
+      AppAlert.show(
+        context,
+        'Tạo hồ sơ bệnh án thành công!',
+        tone: AppAlertTone.success,
+      );
+      Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) {
+      if (context.mounted) {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(

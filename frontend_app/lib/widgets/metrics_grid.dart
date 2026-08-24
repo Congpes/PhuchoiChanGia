@@ -5,8 +5,9 @@ import 'dart:math';
 import '../models/gait_data.dart';
 import '../theme/app_theme.dart';
 
-/// Bảng điều khiển phân tích chi tiết dáng đi của bệnh nhân
-class MetricsGrid extends StatelessWidget {
+/// Bảng điều khiển chỉ số cho một đoạn dáng đi đã chọn.
+/// Video, timeline và thư viện phiên được quản lý bởi TabAnalysis.
+class MetricsGrid extends StatefulWidget {
   const MetricsGrid({
     super.key,
     required this.scan,
@@ -19,311 +20,124 @@ class MetricsGrid extends StatelessWidget {
   final Patient? patient;
 
   @override
+  State<MetricsGrid> createState() => _MetricsGridState();
+}
+
+class _MetricsGridState extends State<MetricsGrid> {
+  int _activeGroup = 0;
+
+  double _calculateRom(GaitCycleCurve? curve) {
+    if (curve == null || curve.angles.isEmpty) return 0.0;
+    return curve.angles.reduce(max) - curve.angles.reduce(min);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Calculate Joint ROM Symmetry
+    final scan = widget.scan;
+    final baseline = widget.baseline;
+    final patient = widget.patient;
+
     double kneeSymmetry = 100.0;
     if (baseline != null) {
-      final double scanRomL = _calculateRom(scan.leftKnee);
-      final double scanRomR = _calculateRom(scan.rightKnee);
-      final double baseRomL = _calculateRom(baseline!.leftKnee);
-      final double baseRomR = _calculateRom(baseline!.rightKnee);
-
-      final double scanDiff = (scanRomL - scanRomR).abs();
-      final double baseDiff = (baseRomL - baseRomR).abs();
-
+      final scanDiff =
+          (_calculateRom(scan.leftKnee) - _calculateRom(scan.rightKnee)).abs();
+      final baseDiff =
+          (_calculateRom(baseline.leftKnee) - _calculateRom(baseline.rightKnee))
+              .abs();
       kneeSymmetry = max(0.0, 100.0 - (scanDiff - baseDiff).abs() * 2);
-      if (kneeSymmetry > 100.0) kneeSymmetry = 100.0;
+      kneeSymmetry = min(100.0, kneeSymmetry);
     } else {
-      final double romL = _calculateRom(scan.leftKnee);
-      final double romR = _calculateRom(scan.rightKnee);
-      if (romL > 0 && romR > 0) {
-        kneeSymmetry = (min(romL, romR) / max(romL, romR)) * 100.0;
+      final leftRom = _calculateRom(scan.leftKnee);
+      final rightRom = _calculateRom(scan.rightKnee);
+      if (leftRom > 0 && rightRom > 0) {
+        kneeSymmetry = min(leftRom, rightRom) / max(leftRom, rightRom) * 100;
       }
     }
 
-    final double forceSymmetry = scan.plantarLoadSymmetry ?? 100.0;
+    final forceSymmetry = scan.plantarLoadSymmetry ?? 100.0;
+    final leftHealthy = patient?.healthyLeg == LegSide.left;
+    const groups = [
+      ('knee', 'GỐI', Icons.directions_walk_outlined),
+      ('hip', 'HÔNG', Icons.accessibility_new_outlined),
+      ('pelvis', 'CHẬU', Icons.rotate_90_degrees_ccw_outlined),
+    ];
+    final active = groups[_activeGroup.clamp(0, groups.length - 1)];
 
-    GaitCycleCurve? baselineHipLeft;
-    GaitCycleCurve? baselineHipRight;
-    GaitCycleCurve? baselineKneeLeft;
-    GaitCycleCurve? baselineKneeRight;
-    GaitCycleCurve? baselinePelvic;
-
-    if (baseline != null && patient != null) {
-      final isLeftHealthy = patient!.healthyLeg == LegSide.left;
-      baselineHipLeft = isLeftHealthy ? baseline!.leftHip : null;
-      baselineHipRight = !isLeftHealthy ? baseline!.rightHip : null;
-      baselineKneeLeft = isLeftHealthy ? baseline!.leftKnee : null;
-      baselineKneeRight = !isLeftHealthy ? baseline!.rightKnee : null;
-      baselinePelvic = baseline!.pelvicTilt;
-    }
+    final kneeColor = kneeSymmetry < 75
+        ? AppColors.critical
+        : kneeSymmetry < 90
+            ? AppColors.warning
+            : AppColors.accentGreen;
+    final kneeStatus = kneeSymmetry < 75
+        ? 'cần kiểm tra'
+        : kneeSymmetry < 90
+            ? 'chấp nhận'
+            : 'ổn định';
+    final forceColor = scan.plantarLoadSymmetry == null
+        ? AppColors.textSecondary
+        : forceSymmetry < 70
+            ? AppColors.critical
+            : forceSymmetry < 85
+                ? AppColors.warning
+                : AppColors.accentGreen;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: Column(
         children: [
-          _buildKpiBar(scan, kneeSymmetry, forceSymmetry),
-          const SizedBox(height: 4),
-
-          // Fatigue warning banner if detected
-          if (scan.fatigueFlag == 1)
-            Container(
-              margin: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.orange[800]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded,
-                      color: Colors.orange[700], size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'AI Phát hiện Dấu hiệu Mỏi cơ (Fatigue Detected): Độ dốc biên độ dao động khớp giảm dần (Slope: ${scan.fatigueSlope.toStringAsFixed(3)}). Đề xuất giảm tải lực hoặc nghỉ ngơi.',
-                      style: TextStyle(
-                          color: Colors.orange[200],
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                ],
-              ),
+          _buildKpiBar(
+            scan,
+            kneeSymmetry,
+            forceSymmetry,
+            kneeColor,
+            forceColor,
+            kneeStatus,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.insights_outlined,
+                  size: 16, color: AppColors.accent),
+              const SizedBox(width: 7),
+              const Text('ĐỘNG HỌC TỪ CAMERA',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              if (scan.fatigueFlag == 1) ...[
+                const Icon(Icons.warning_amber_rounded,
+                    size: 14, color: AppColors.warning),
+                const SizedBox(width: 4),
+                const Text('Có cờ mỏi cơ',
+                    style: TextStyle(fontSize: 9, color: AppColors.warning)),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 7,
+              children: List.generate(groups.length, (index) {
+                final group = groups[index];
+                return ChoiceChip(
+                  selected: index == _activeGroup,
+                  avatar: Icon(group.$3, size: 14),
+                  label: Text(group.$2, style: const TextStyle(fontSize: 9)),
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (_) => setState(() => _activeGroup = index),
+                );
+              }),
             ),
-
+          ),
+          const SizedBox(height: 6),
           Expanded(
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(4.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Section 1: Hip & Pelvic angles
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Góc Khớp Hông & Nghiêng Xương Chậu (Sagittal / Frontal)',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 180,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Hông trái (L)',
-                              yAxisLabel: 'Góc hông (°)',
-                              primaryCurve: scan.leftHip,
-                              secondaryCurve: baselineHipLeft,
-                              lineColor: AppColors.leftLeg,
-                            ),
-                          ),
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Hông phải (R)',
-                              yAxisLabel: 'Góc hông (°)',
-                              primaryCurve: scan.rightHip,
-                              secondaryCurve: baselineHipRight,
-                              lineColor: AppColors.rightLeg,
-                            ),
-                          ),
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Nghiêng xương chậu (Pelvic Tilt)',
-                              yAxisLabel: 'Góc nghiêng (°)',
-                              primaryCurve: scan.pelvicTilt,
-                              secondaryCurve: baselinePelvic,
-                              lineColor: AppColors.accentGreen,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Section 2: Knee joint angles
-                    const Divider(color: AppColors.border),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Góc Khớp Gối (Knee Flexion/Extension)',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 180,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Gối trái (L)',
-                              yAxisLabel: 'Góc gối (°)',
-                              primaryCurve: scan.leftKnee,
-                              secondaryCurve: baselineKneeLeft,
-                              lineColor: AppColors.leftLeg,
-                            ),
-                          ),
-                          Expanded(
-                            child: GaitChart(
-                              title: 'Gối phải (R)',
-                              yAxisLabel: 'Góc gối (°)',
-                              primaryCurve: scan.rightKnee,
-                              secondaryCurve: baselineKneeRight,
-                              lineColor: AppColors.rightLeg,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Section 4: Plantar pressure COP and Inverse Dynamics Socket moment (Restored UI templates)
-                    const Divider(color: AppColors.border),
-                    const SizedBox(height: 8),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Phân tích áp áp lực Insole & Lực ổ mỏm cụt (FSR/CoP & Socket Torque)',
-                        style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // CoP trajectories Left/Right
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: AppColors.panel,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: AppColors.border),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                    'Quỹ đạo tâm áp lực (CoP Trajectory) - Cảm biến thật',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.textSecondary)),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: AspectRatio(
-                                        aspectRatio: 0.6,
-                                        child: CustomPaint(
-                                          painter: _CopTrajectoryPainter(
-                                              trajectory: scan.copTrajectory,
-                                              isLeft: true),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: AspectRatio(
-                                        aspectRatio: 0.6,
-                                        child: CustomPaint(
-                                          painter: _CopTrajectoryPainter(
-                                              trajectory: scan.copTrajectory,
-                                              isLeft: false),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        // Socket torque / Inverse dynamics details
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: AppColors.panel,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: AppColors.border),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                    'Mô-men lực khớp ổ mỏm cụt (Socket Torque)',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.textSecondary)),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Tính toán dựa trên tải trọng GRF (Insole) & Lever Arm (CoP):',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.textSecondary,
-                                      height: 1.3),
-                                ),
-                                const SizedBox(height: 16),
-                                _buildTorqueItem(
-                                    'Socket Extension Moment (Max)',
-                                    '-- N·m',
-                                    'Chờ dữ liệu phần cứng Insole'),
-                                _buildTorqueItem('Socket Flexion Moment (Max)',
-                                    '-- N·m', 'Chờ dữ liệu phần cứng Insole'),
-                                _buildTorqueItem('Mô-men nghiêng cẳng chân',
-                                    '-- N·m', 'Chờ kết nối thiết bị'),
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surfaceMuted,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: const Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text('AI AUTO-FLAG RULES (PRE-HARDWARE):',
-                                          style: TextStyle(
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.bold,
-                                              color: AppColors.accent)),
-                                      SizedBox(height: 4),
-                                      Text(
-                                          '• Cảnh báo lệch lực: Trục CoP chân giả lệch ngoài biên > 1.2cm',
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              color: AppColors.textSecondary)),
-                                      Text(
-                                          '• Cảnh báo góc gối: ROM gối chân giả lăng < 45 độ ở pha swing',
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              color: AppColors.textSecondary)),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-                ),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: _kinematicGroup(
+                key: ValueKey(active.$1),
+                group: active.$1,
+                scan: scan,
+                baseline: baseline,
+                leftHealthy: leftHealthy,
               ),
             ),
           ),
@@ -332,87 +146,113 @@ class MetricsGrid extends StatelessWidget {
     );
   }
 
-  double _calculateRom(GaitCycleCurve? curve) {
-    if (curve == null || curve.angles.isEmpty) return 0.0;
-    final double maxVal = curve.angles.reduce(max);
-    final double minVal = curve.angles.reduce(min);
-    return maxVal - minVal;
+  Widget _kinematicGroup({
+    required Key key,
+    required String group,
+    required ScanResult scan,
+    required ScanResult? baseline,
+    required bool leftHealthy,
+  }) {
+    if (group == 'pelvis') {
+      return GaitChart(
+        key: key,
+        title: 'Nghiêng xương chậu',
+        yAxisLabel: 'Góc nghiêng (°)',
+        primaryCurve: scan.pelvicTilt,
+        secondaryCurve: baseline?.pelvicTilt,
+        lineColor: AppColors.accentGreen,
+      );
+    }
+
+    final isKnee = group == 'knee';
+    final label = isKnee ? 'Góc gập gối 2D' : 'Góc gập hông 2D';
+    final leftCurve = isKnee ? scan.leftKnee : scan.leftHip;
+    final rightCurve = isKnee ? scan.rightKnee : scan.rightHip;
+    final baselineLeft = isKnee ? baseline?.leftKnee : baseline?.leftHip;
+    final baselineRight = isKnee ? baseline?.rightKnee : baseline?.rightHip;
+
+    return Row(
+      key: key,
+      children: [
+        Expanded(
+          child: GaitChart(
+            title: '$label · trái${leftHealthy ? ' (lành)' : ' (giả)'}',
+            yAxisLabel: '$label (°)',
+            primaryCurve: leftCurve,
+            secondaryCurve: baselineLeft,
+            lineColor: AppColors.leftLeg,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: GaitChart(
+            title: '$label · phải${leftHealthy ? ' (giả)' : ' (lành)'}',
+            yAxisLabel: '$label (°)',
+            primaryCurve: rightCurve,
+            secondaryCurve: baselineRight,
+            lineColor: AppColors.rightLeg,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildKpiBar(
-      ScanResult scan, double kneeSymmetry, double forceSymmetry) {
-    final cadence = scan.cadence;
-    final stride = scan.strideLength;
-
-    Color kneeColor = AppColors.accentGreen;
-    String kneeRating = 'Tối ưu';
-    if (kneeSymmetry < 75) {
-      kneeColor = AppColors.critical;
-      kneeRating = 'Cần chỉnh';
-    } else if (kneeSymmetry < 90) {
-      kneeColor = AppColors.warning;
-      kneeRating = 'Chấp nhận';
-    }
-
-    Color forceColor = AppColors.accentGreen;
-    String forceRating = 'Chờ cảm biến';
-    if (forceSymmetry < 70) {
-      forceColor = AppColors.critical;
-      forceRating = 'Lệch nặng';
-    } else if (forceSymmetry < 85) {
-      forceColor = AppColors.warning;
-      forceRating = 'Lệch nhẹ';
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, right: 4, top: 8, bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildKpiCard(
-              title: 'NHỊP ĐIỆU (CADENCE)',
-              value: cadence != null
-                  ? '${cadence.toStringAsFixed(0)} bước/phút'
-                  : '--',
-              icon: Icons.speed,
-              color: AppColors.accent,
-            ),
+    ScanResult scan,
+    double kneeSymmetry,
+    double forceSymmetry,
+    Color kneeColor,
+    Color forceColor,
+    String kneeStatus,
+  ) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildKpiCard(
+            title: 'NHỊP ĐIỆU',
+            value: scan.cadence != null
+                ? '${scan.cadence!.toStringAsFixed(0)} bước/phút'
+                : '—',
+            icon: Icons.speed,
+            color: AppColors.accent,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _buildKpiCard(
-              title: 'SẢI CHÂN (STRIDE LENGTH)',
-              value: stride != null ? '${stride.toStringAsFixed(2)} m' : '--',
-              icon: Icons.straighten,
-              color: AppColors.accentGreen,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildKpiCard(
+            title: 'SẢI CHÂN',
+            value: scan.strideLength != null
+                ? '${scan.strideLength!.toStringAsFixed(2)} m'
+                : '—',
+            icon: Icons.straighten,
+            color: AppColors.accentGreen,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _buildKpiCard(
-              title: 'ĐỐI XỨNG KHỚP GỐI',
-              value: '${kneeSymmetry.toStringAsFixed(1)}%',
-              subtitle: kneeRating,
-              icon: Icons.balance,
-              color: kneeColor,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildKpiCard(
+            title: 'ĐỐI XỨNG GỐI',
+            value: '${kneeSymmetry.toStringAsFixed(1)}%',
+            subtitle: kneeStatus,
+            icon: Icons.balance_outlined,
+            color: kneeColor,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _buildKpiCard(
-              title: 'ĐỐI XỨNG LỰC INSOLE',
-              value: scan.plantarLoadSymmetry != null
-                  ? '${forceSymmetry.toStringAsFixed(1)}%'
-                  : '--%',
-              subtitle: forceRating,
-              icon: Icons.monitor_weight_outlined,
-              color: scan.plantarLoadSymmetry != null
-                  ? forceColor
-                  : AppColors.textSecondary,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildKpiCard(
+            title: 'ĐỐI XỨNG INSOLE',
+            value: scan.plantarLoadSymmetry == null
+                ? '—'
+                : '${forceSymmetry.toStringAsFixed(1)}%',
+            subtitle: scan.plantarLoadSymmetry == null
+                ? 'chưa có FSR'
+                : 'tải trái–phải',
+            icon: Icons.sensors_outlined,
+            color: forceColor,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -424,7 +264,8 @@ class MetricsGrid extends StatelessWidget {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      height: 66,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.panel,
         borderRadius: BorderRadius.circular(8),
@@ -432,75 +273,39 @@ class MetricsGrid extends StatelessWidget {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundColor: color.withValues(alpha: 0.1),
-            child: Icon(icon, color: color, size: 20),
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.10),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 15),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                      fontSize: 10,
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: color,
-                        fontWeight: FontWeight.w500),
-                  ),
-                ]
+                Text(title,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 8.5,
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(value,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w700)),
+                if (subtitle != null)
+                  Text(subtitle,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 8.5, color: color)),
               ],
             ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTorqueItem(String title, String val, String status) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 11, color: AppColors.textSecondary)),
-              Text(val,
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.accent)),
-            ],
           ),
-          const SizedBox(height: 2),
-          Text('Trạng thái: $status',
-              style: const TextStyle(
-                  fontSize: 10,
-                  color: AppColors.baseline,
-                  fontStyle: FontStyle.italic)),
         ],
       ),
     );
@@ -582,7 +387,7 @@ class GaitChart extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.all(4),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
       decoration: BoxDecoration(
         color: AppColors.panel,
         border: Border.all(color: AppColors.border),
@@ -616,7 +421,7 @@ class GaitChart extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           Expanded(
             child: LineChart(
               LineChartData(
@@ -642,18 +447,21 @@ class GaitChart extends StatelessWidget {
                       showTitles: true,
                       reservedSize: 18,
                       getTitlesWidget: (val, meta) {
-                        if (val == 0)
+                        if (val == 0) {
                           return const Text('0%',
                               style: TextStyle(
                                   fontSize: 9, color: AppColors.textSecondary));
-                        if (val == 50)
+                        }
+                        if (val == 50) {
                           return const Text('50%',
                               style: TextStyle(
                                   fontSize: 9, color: AppColors.textSecondary));
-                        if (val == 100)
+                        }
+                        if (val == 100) {
                           return const Text('100%',
                               style: TextStyle(
                                   fontSize: 9, color: AppColors.textSecondary));
+                        }
                         return const SizedBox.shrink();
                       },
                     ),
@@ -720,107 +528,4 @@ class GaitChart extends StatelessWidget {
       ],
     );
   }
-}
-
-class _CopTrajectoryPainter extends CustomPainter {
-  _CopTrajectoryPainter({required this.trajectory, required this.isLeft});
-  final List<dynamic> trajectory;
-  final bool isLeft;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-
-    // Draw background
-    final bgPaint = Paint()
-      ..color = AppColors.sidebar
-      ..style = PaintingStyle.fill;
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(0, 0, w, h), const Radius.circular(8)),
-        bgPaint);
-
-    // Draw crosshair axes
-    final axisPaint = Paint()
-      ..color = AppColors.border
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
-    canvas.drawLine(Offset(w / 2, 10), Offset(w / 2, h - 10), axisPaint);
-    canvas.drawLine(Offset(10, h / 2), Offset(w - 10, h / 2), axisPaint);
-
-    // Draw foot contour (outline shape)
-    final footPaint = Paint()
-      ..color = AppColors.surfaceMuted
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
-    final footPath = Path();
-    if (isLeft) {
-      footPath.moveTo(w * 0.4, h * 0.9);
-      footPath.quadraticBezierTo(w * 0.25, h * 0.6, w * 0.35, h * 0.4);
-      footPath.quadraticBezierTo(w * 0.2, h * 0.15, w * 0.5, h * 0.08);
-      footPath.quadraticBezierTo(w * 0.75, h * 0.15, w * 0.65, h * 0.4);
-      footPath.quadraticBezierTo(w * 0.75, h * 0.6, w * 0.6, h * 0.9);
-      footPath.close();
-    } else {
-      footPath.moveTo(w * 0.6, h * 0.9);
-      footPath.quadraticBezierTo(w * 0.75, h * 0.6, w * 0.65, h * 0.4);
-      footPath.quadraticBezierTo(w * 0.8, h * 0.15, w * 0.5, h * 0.08);
-      footPath.quadraticBezierTo(w * 0.25, h * 0.15, w * 0.35, h * 0.4);
-      footPath.quadraticBezierTo(w * 0.25, h * 0.6, w * 0.4, h * 0.9);
-      footPath.close();
-    }
-    canvas.drawPath(footPath, footPaint);
-
-    // Map CoP coordinates (-3.5 to 3.5) to pixel coordinate space
-    Offset mapCoord(double cx, double cy) {
-      final px = w / 2 + (cx / 3.5) * (w * 0.35);
-      final py = h / 2 - (cy / 3.5) * (h * 0.35);
-      return Offset(px, py);
-    }
-
-    // Draw CoP points trace connected line
-    final pathPaint = Paint()
-      ..color = isLeft ? AppColors.leftLeg : AppColors.rightLeg
-      ..strokeWidth = 2.5
-      ..style = PaintingStyle.stroke;
-
-    final copPath = Path();
-    bool first = true;
-    for (final pt in trajectory) {
-      if (pt is Map) {
-        final xKey = isLeft ? 'left_x' : 'right_x';
-        final yKey = isLeft ? 'left_y' : 'right_y';
-        final cx = (pt[xKey] as num?)?.toDouble() ?? 0.0;
-        final cy = (pt[yKey] as num?)?.toDouble() ?? 0.0;
-        if (cx == 0.0 && cy == 0.0) continue;
-        final offset = mapCoord(cx, cy);
-        if (first) {
-          copPath.moveTo(offset.dx, offset.dy);
-          first = false;
-        } else {
-          copPath.lineTo(offset.dx, offset.dy);
-        }
-      }
-    }
-    canvas.drawPath(copPath, pathPaint);
-
-    // Draw start dot in green
-    if (trajectory.isNotEmpty) {
-      final startPt = trajectory.first;
-      if (startPt is Map) {
-        final xKey = isLeft ? 'left_x' : 'right_x';
-        final yKey = isLeft ? 'left_y' : 'right_y';
-        final sx = (startPt[xKey] as num?)?.toDouble() ?? 0.0;
-        final sy = (startPt[yKey] as num?)?.toDouble() ?? 0.0;
-        if (sx != 0.0 || sy != 0.0) {
-          canvas.drawCircle(
-              mapCoord(sx, sy), 4.0, Paint()..color = Colors.greenAccent);
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

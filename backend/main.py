@@ -14,6 +14,16 @@ import uvicorn
 
 # Import custom sub-modules
 from database import get_db_connection, init_db
+from camera_fusion import (
+    DualCameraSynchronizer,
+    apply_stereo_flexion,
+    fuse_synchronized_sample,
+    sagittal_fallback_sample,
+)
+from pose_identity_lock import PoseIdentityLock
+from pose_quality import assess_pose_sample
+from stereo_calibration import StereoCalibrationError, StereoCalibrationManager
+
 from algorithms import (
     calculate_angle,
     resample,
@@ -26,15 +36,23 @@ from algorithms import (
 
 app = FastAPI()
 
-# The deployed setup uses the laptop camera and one USB camera simultaneously.
-# Environment variables still allow falling back to one camera or swapping indexes.
+# Camera roles are intentionally selected in the setup screen before Scan.
+# Environment variables can still preconfigure a deployed appliance if needed.
+_env_frontal_index = os.getenv("CAMERA_FRONTAL_INDEX")
+_env_sagittal_index = os.getenv("CAMERA_SAGITTAL_INDEX")
 SINGLE_CAMERA_MODE = os.getenv("SINGLE_CAMERA_MODE", "false").lower() in ("1", "true", "yes")
-CAMERA_FRONTAL_INDEX = int(os.getenv("CAMERA_FRONTAL_INDEX", "0"))
-CAMERA_SAGITTAL_INDEX = int(os.getenv("CAMERA_SAGITTAL_INDEX", "1"))
+CAMERA_FRONTAL_INDEX = int(_env_frontal_index) if _env_frontal_index is not None else None
+CAMERA_SAGITTAL_INDEX = int(_env_sagittal_index) if _env_sagittal_index is not None else None
+camera_configured = CAMERA_FRONTAL_INDEX is not None and (
+    SINGLE_CAMERA_MODE or CAMERA_SAGITTAL_INDEX is not None
+)
 CAMERA_BACKEND = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
 
 CAMERA_RETRY_SECONDS = float(os.getenv('CAMERA_RETRY_SECONDS', '2.0'))
 CAMERA_READ_FAILURE_LIMIT = int(os.getenv('CAMERA_READ_FAILURE_LIMIT', '30'))
+CAMERA_SYNC_TOLERANCE_MS = float(os.getenv('CAMERA_SYNC_TOLERANCE_MS', '40.0'))
+CAMERA_FRAME_DELAY_SECONDS = float(os.getenv('CAMERA_FRAME_DELAY_SECONDS', '0.005'))
+CAMERA_MAX_REPROJECTION_ERROR_PX = float(os.getenv('CAMERA_MAX_REPROJECTION_ERROR_PX', '8.0'))
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,8 +68,12 @@ init_db()
 # Global frames and locks for 2 camera streams
 latest_frame_0 = None
 latest_frame_1 = None
+latest_raw_frame_0 = None
+latest_raw_frame_1 = None
 latest_frame_0_at = 0.0
 latest_frame_1_at = 0.0
+latest_frame_0_ns = 0
+latest_frame_1_ns = 0
 latest_pose_0_at = 0.0
 latest_pose_1_at = 0.0
 latest_sagittal_pose_at = 0.0
@@ -65,6 +87,14 @@ camera_roles_swapped = False
 # same clock as live FSR packets.
 live_gait_samples = deque(maxlen=3600)
 live_gait_lock = threading.Lock()
+gait_store_lock = threading.Lock()
+camera_synchronizer = DualCameraSynchronizer(CAMERA_SYNC_TOLERANCE_MS)
+stereo_calibration = StereoCalibrationManager(
+    os.getenv(
+        "CAMERA_STEREO_CALIBRATION_PATH",
+        os.path.join(os.path.dirname(__file__), "camera_stereo_calibration.json"),
+    )
+)
 
 running = True
 is_recording = False
@@ -86,14 +116,88 @@ recorded_pelvic_tilt = []
 recorded_trunk_tilt = []
 recorded_left_hip = []
 recorded_right_hip = []
+recorded_pose_quality = []
 session_markers = []
 
 # MediaPipe Pose Setup. Each capture thread creates its own Pose instance because
 # a single MediaPipe graph must not be processed concurrently by two threads.
 mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
+
+# Skeleton for gait analysis: intentionally excludes face, elbows, wrists and hands.
+GAIT_LANDMARKS = (
+    mp_pose.PoseLandmark.LEFT_SHOULDER,
+    mp_pose.PoseLandmark.RIGHT_SHOULDER,
+    mp_pose.PoseLandmark.LEFT_HIP,
+    mp_pose.PoseLandmark.RIGHT_HIP,
+    mp_pose.PoseLandmark.LEFT_KNEE,
+    mp_pose.PoseLandmark.RIGHT_KNEE,
+    mp_pose.PoseLandmark.LEFT_ANKLE,
+    mp_pose.PoseLandmark.RIGHT_ANKLE,
+    mp_pose.PoseLandmark.LEFT_HEEL,
+    mp_pose.PoseLandmark.RIGHT_HEEL,
+    mp_pose.PoseLandmark.LEFT_FOOT_INDEX,
+    mp_pose.PoseLandmark.RIGHT_FOOT_INDEX,
+)
+GAIT_CONNECTIONS = frozenset({
+    (mp_pose.PoseLandmark.LEFT_SHOULDER.value, mp_pose.PoseLandmark.RIGHT_SHOULDER.value),
+    (mp_pose.PoseLandmark.LEFT_SHOULDER.value, mp_pose.PoseLandmark.LEFT_HIP.value),
+    (mp_pose.PoseLandmark.RIGHT_SHOULDER.value, mp_pose.PoseLandmark.RIGHT_HIP.value),
+    (mp_pose.PoseLandmark.LEFT_HIP.value, mp_pose.PoseLandmark.RIGHT_HIP.value),
+    (mp_pose.PoseLandmark.LEFT_HIP.value, mp_pose.PoseLandmark.LEFT_KNEE.value),
+    (mp_pose.PoseLandmark.LEFT_KNEE.value, mp_pose.PoseLandmark.LEFT_ANKLE.value),
+    (mp_pose.PoseLandmark.LEFT_ANKLE.value, mp_pose.PoseLandmark.LEFT_HEEL.value),
+    (mp_pose.PoseLandmark.LEFT_HEEL.value, mp_pose.PoseLandmark.LEFT_FOOT_INDEX.value),
+    (mp_pose.PoseLandmark.RIGHT_HIP.value, mp_pose.PoseLandmark.RIGHT_KNEE.value),
+    (mp_pose.PoseLandmark.RIGHT_KNEE.value, mp_pose.PoseLandmark.RIGHT_ANKLE.value),
+    (mp_pose.PoseLandmark.RIGHT_ANKLE.value, mp_pose.PoseLandmark.RIGHT_HEEL.value),
+    (mp_pose.PoseLandmark.RIGHT_HEEL.value, mp_pose.PoseLandmark.RIGHT_FOOT_INDEX.value),
+})
+GAIT_COLOR = (0, 220, 0)
+GAIT_MIN_VISIBILITY_TO_DRAW = 0.15
+
+
+def draw_gait_skeleton(frame, landmarks):
+    """Draw only gait landmarks with OpenCV, avoiding MediaPipe's all-index mapping."""
+    height, width = frame.shape[:2]
+    points = {}
+    for landmark in GAIT_LANDMARKS:
+        item = landmarks.landmark[landmark.value]
+        if float(getattr(item, "visibility", 1.0)) < GAIT_MIN_VISIBILITY_TO_DRAW:
+            continue
+        points[landmark.value] = (int(item.x * width), int(item.y * height))
+
+    for start_index, end_index in GAIT_CONNECTIONS:
+        if start_index in points and end_index in points:
+            cv2.line(frame, points[start_index], points[end_index], GAIT_COLOR, 2, cv2.LINE_AA)
+    for point in points.values():
+        cv2.circle(frame, point, 3, GAIT_COLOR, -1, cv2.LINE_AA)
+
+QUALITY_LANDMARKS = {
+    "left_shoulder": mp_pose.PoseLandmark.LEFT_SHOULDER,
+    "right_shoulder": mp_pose.PoseLandmark.RIGHT_SHOULDER,
+    "left_hip": mp_pose.PoseLandmark.LEFT_HIP,
+    "right_hip": mp_pose.PoseLandmark.RIGHT_HIP,
+    "left_knee": mp_pose.PoseLandmark.LEFT_KNEE,
+    "right_knee": mp_pose.PoseLandmark.RIGHT_KNEE,
+    "left_ankle": mp_pose.PoseLandmark.LEFT_ANKLE,
+    "right_ankle": mp_pose.PoseLandmark.RIGHT_ANKLE,
+}
+FUSION_LANDMARKS = {
+    **QUALITY_LANDMARKS,
+    "left_heel": mp_pose.PoseLandmark.LEFT_HEEL,
+    "right_heel": mp_pose.PoseLandmark.RIGHT_HEEL,
+}
+
+
+def landmark_visibility(landmarks):
+    return {
+        name: float(getattr(landmarks.landmark[item.value], "visibility", 0.0))
+        for name, item in QUALITY_LANDMARKS.items()
+    }
+
 
 def create_pose_detector():
+
     return mp_pose.Pose(
         static_image_mode=False,
         model_complexity=1,
@@ -116,7 +220,13 @@ def normalize_axial_angle(angle):
         angle += 180.0
     return angle
 
+def calculate_flexion_angle(a, b, c):
+    """Return unsigned 2D flexion: 0° at full extension, increasing with flexion."""
+    return max(0.0, 180.0 - float(calculate_angle(a, b, c)))
+
+
 def pose_sample_from_landmarks(landmarks, width, height):
+
     """Calculate the gait metrics needed by the logical sagittal camera."""
     lm = landmarks.landmark
     def point(name):
@@ -134,61 +244,178 @@ def pose_sample_from_landmarks(landmarks, width, height):
     l_ankle = point(mp_pose.PoseLandmark.LEFT_ANKLE)
     l_heel = point(mp_pose.PoseLandmark.LEFT_HEEL)
 
+    # Use the shoulder midpoint as a shared trunk reference for both hips.
+    # The lower-limb identity lock may swap leg landmarks during occlusion;
+    # tying a corrected hip to one raw shoulder can otherwise create a
+    # diagonal, non-anatomical hip angle.
+    mid_shoulder = [(l_shoulder[0] + r_shoulder[0]) / 2,
+                    (l_shoulder[1] + r_shoulder[1]) / 2]
     sample = {
-        "right_hip": calculate_angle(r_shoulder, r_hip, r_knee),
-        "right_knee": calculate_angle(r_hip, r_knee, r_ankle),
+        "right_hip": calculate_flexion_angle(mid_shoulder, r_hip, r_knee),
+        "right_knee": calculate_flexion_angle(r_hip, r_knee, r_ankle),
         "right_ankle": calculate_angle(r_knee, r_ankle, r_heel),
-        "left_hip": calculate_angle(l_shoulder, l_hip, l_knee),
-        "left_knee": calculate_angle(l_hip, l_knee, l_ankle),
+        "left_hip": calculate_flexion_angle(mid_shoulder, l_hip, l_knee),
+        "left_knee": calculate_flexion_angle(l_hip, l_knee, l_ankle),
         "left_ankle": calculate_angle(l_knee, l_ankle, l_heel),
     }
     sample["pelvic_tilt"] = math.degrees(math.atan2(
         l_hip[1] - r_hip[1], l_hip[0] - r_hip[0]
     ))
-    mid_shoulder = [(l_shoulder[0] + r_shoulder[0]) / 2,
-                    (l_shoulder[1] + r_shoulder[1]) / 2]
     mid_hip = [(l_hip[0] + r_hip[0]) / 2,
                (l_hip[1] + r_hip[1]) / 2]
     sample["trunk_tilt"] = normalize_axial_angle(math.degrees(math.atan2(
         mid_shoulder[0] - mid_hip[0], mid_hip[1] - mid_shoulder[1]
     )))
     values = tuple(sample.values())
-    return sample if all(value > 0 for value in values[:6]) and all(
-        math.isfinite(float(value)) for value in values
-    ) else None
+    if not (
+        all(0.0 <= value <= 180.0 for value in values[:6])
+        and all(math.isfinite(float(value)) for value in values)
+    ):
+        return None
+    sample["poseQuality"] = assess_pose_sample(
+        sample,
+        landmark_visibility(landmarks),
+        target_side=prosthetic_leg,
+    )
+    return sample
+
+
+def draw_sagittal_metrics(frame, landmarks, sample, width, height):
+    lm = landmarks.landmark
+    right_hip = lm[mp_pose.PoseLandmark.RIGHT_HIP.value]
+    right_knee = lm[mp_pose.PoseLandmark.RIGHT_KNEE.value]
+    left_hip = lm[mp_pose.PoseLandmark.LEFT_HIP.value]
+    left_knee = lm[mp_pose.PoseLandmark.LEFT_KNEE.value]
+    draw_overlay_text(frame, f"Hong P: {sample['right_hip']:.1f}*", (int(right_hip.x * width) + 10, int(right_hip.y * height)), color=(0, 255, 255))
+    draw_overlay_text(frame, f"Hong T: {sample['left_hip']:.1f}*", (int(left_hip.x * width) + 10, int(left_hip.y * height)), color=(255, 150, 0))
+    draw_overlay_text(frame, f"Goi P: {sample['right_knee']:.1f}*", (int(right_knee.x * width) + 10, int(right_knee.y * height)), color=(0, 255, 255))
+    draw_overlay_text(frame, f"Goi T: {sample['left_knee']:.1f}*", (int(left_knee.x * width) + 10, int(left_knee.y * height)), color=(255, 150, 0))
+    draw_overlay_text(frame, f"Than: {sample['trunk_tilt']:.1f}*", (20, 80), color=(100, 255, 100))
+
+
+def pose_landmark_mapping(landmarks):
+    """Copy the normalized gait landmarks so camera threads never share protobufs."""
+    return {
+        name: {
+            "x": float(landmarks.landmark[item.value].x),
+            "y": float(landmarks.landmark[item.value].y),
+            "z": float(getattr(landmarks.landmark[item.value], "z", 0.0)),
+            "visibility": float(getattr(landmarks.landmark[item.value], "visibility", 0.0)),
+        }
+        for name, item in FUSION_LANDMARKS.items()
+    }
+
+
+def submit_camera_pose(
+    physical_slot, landmarks, sagittal_sample, frame_at, captured_ns, width, height
+):
+    """Synchronize logical views and store exactly one sample per sagittal frame."""
+    if SINGLE_CAMERA_MODE:
+        if sagittal_sample is not None:
+            store_sagittal_sample(
+                sagittal_fallback_sample(sagittal_sample, single_camera=True),
+                frame_at,
+            )
+        return
+
+    with camera_roles_lock:
+        swapped = camera_roles_swapped
+    logical_view = (
+        "sagittal" if (physical_slot == 0) == swapped else "frontal"
+    )
+    observation = {
+        "captured_ns": captured_ns,
+        "captured_at": frame_at,
+        "landmarks": pose_landmark_mapping(landmarks),
+        "sample": sagittal_sample if logical_view == "sagittal" else None,
+        "physicalSlot": int(physical_slot),
+        "imageSize": [int(width), int(height)],
+    }
+    for output in camera_synchronizer.submit(logical_view, observation):
+        sagittal = output["sagittal"]
+        sample = sagittal.get("sample")
+        if sample is None:
+            continue
+        if output["kind"] == "paired":
+            fused = fuse_synchronized_sample(
+                sample,
+                sagittal["landmarks"],
+                output["frontal"]["landmarks"],
+                output["syncErrorMs"],
+                CAMERA_SYNC_TOLERANCE_MS,
+            )
+            frontal = output["frontal"]
+            by_slot = {
+                int(sagittal["physicalSlot"]): sagittal,
+                int(frontal["physicalSlot"]): frontal,
+            }
+            camera_indices = (CAMERA_FRONTAL_INDEX, CAMERA_SAGITTAL_INDEX)
+            calibration_compatible = stereo_calibration.compatible(camera_indices)
+            fused.setdefault("cameraFusion", {})["stereoCalibrated"] = calibration_compatible
+            if calibration_compatible and 0 in by_slot and 1 in by_slot:
+                try:
+                    triangulation = stereo_calibration.triangulate(
+                        by_slot[0]["landmarks"],
+                        by_slot[1]["landmarks"],
+                        camera_indices=camera_indices,
+                        image_size_0=tuple(by_slot[0]["imageSize"]),
+                        image_size_1=tuple(by_slot[1]["imageSize"]),
+                    )
+                    fused = apply_stereo_flexion(
+                        fused,
+                        triangulation,
+                        max_reprojection_error_px=CAMERA_MAX_REPROJECTION_ERROR_PX,
+                    )
+                except (StereoCalibrationError, ValueError, TypeError) as exc:
+                    fused["cameraFusion"].update({
+                        "stereoUsed": False,
+                        "stereoError": str(exc),
+                    })
+                    quality = fused.setdefault("poseQuality", {})
+                    quality["stereoReprojectionReliable"] = False
+                    quality["frameReliable"] = False
+        else:
+            fused = sagittal_fallback_sample(sample, single_camera=False)
+        store_sagittal_sample(fused, float(sagittal["captured_at"]))
+
 
 def store_sagittal_sample(sample, frame_at):
     """Store live and optional recording data from the active sagittal source."""
     global is_recording, latest_sagittal_pose_at
-    with live_gait_lock:
-        live_gait_samples.append({"time": frame_at, **sample})
-    latest_sagittal_pose_at = frame_at
-    if not is_recording:
-        return
-    elapsed = frame_at - record_start_time
-    if elapsed > record_duration:
-        is_recording = False
-        save_recorded_data_to_db()
-        return
-    recorded_timestamps.append(elapsed)
-    recorded_left_knee.append(sample["left_knee"])
-    recorded_right_knee.append(sample["right_knee"])
-    recorded_left_ankle.append(sample["left_ankle"])
-    recorded_right_ankle.append(sample["right_ankle"])
-    recorded_pelvic_tilt.append(sample["pelvic_tilt"])
-    recorded_trunk_tilt.append(sample["trunk_tilt"])
-    recorded_left_hip.append(sample["left_hip"])
-    recorded_right_hip.append(sample["right_hip"])
+    with gait_store_lock:
+        with live_gait_lock:
+            live_gait_samples.append({"time": frame_at, **sample})
+        latest_sagittal_pose_at = frame_at
+        if not is_recording:
+            return
+        elapsed = frame_at - record_start_time
+        if elapsed > record_duration:
+            is_recording = False
+            save_recorded_data_to_db()
+            return
+        recorded_timestamps.append(elapsed)
+        recorded_left_knee.append(sample["left_knee"])
+        recorded_right_knee.append(sample["right_knee"])
+        recorded_left_ankle.append(sample["left_ankle"])
+        recorded_right_ankle.append(sample["right_ankle"])
+        recorded_pelvic_tilt.append(sample["pelvic_tilt"])
+        recorded_trunk_tilt.append(sample["trunk_tilt"])
+        recorded_left_hip.append(sample["left_hip"])
+        recorded_right_hip.append(sample["right_hip"])
+        recorded_pose_quality.append(sample.get("poseQuality", {}))
 
-def open_camera(camera_index, label):
+def open_camera(camera_index, label, *, allow_fallback=True):
+    """Open a camera, optionally avoiding slow Windows fallback during discovery."""
     backends = [CAMERA_BACKEND]
-    if CAMERA_BACKEND != cv2.CAP_ANY:
+    if allow_fallback and CAMERA_BACKEND != cv2.CAP_ANY:
         backends.append(cv2.CAP_ANY)
     for backend in backends:
         capture = cv2.VideoCapture(camera_index, backend)
         if capture.isOpened():
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            capture.set(cv2.CAP_PROP_FPS, 30)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             backend_name = 'default' if backend == cv2.CAP_ANY else 'DirectShow'
             print(f'[{label}] Opened device index {camera_index} with {backend_name} backend.')
             return capture
@@ -197,7 +424,7 @@ def open_camera(camera_index, label):
 
 def wait_for_camera(camera_index, label):
     next_log_at = 0.0
-    while running:
+    while running and not camera_stop_event.is_set():
         capture = open_camera(camera_index, label)
         if capture is not None:
             return capture
@@ -205,13 +432,15 @@ def wait_for_camera(camera_index, label):
         if now >= next_log_at:
             print(f'[{label}] Cannot open device index {camera_index}; retrying.')
             next_log_at = now + 10.0
-        time.sleep(CAMERA_RETRY_SECONDS)
+        if camera_stop_event.wait(CAMERA_RETRY_SECONDS):
+            break
     return None
 
 def camera_loop_0():
     """Camera index 0: Frontal view"""
-    global latest_frame_0, latest_frame_0_at, latest_pose_0_at, running
+    global latest_frame_0, latest_raw_frame_0, latest_frame_0_at, latest_frame_0_ns, latest_pose_0_at, running
     pose = create_pose_detector()
+    identity_lock = PoseIdentityLock()
     cap = wait_for_camera(CAMERA_FRONTAL_INDEX, 'Camera 0 / frontal')
     if cap is None:
         print(f'[Camera 0] Cannot open device index {CAMERA_FRONTAL_INDEX}.')
@@ -221,7 +450,7 @@ def camera_loop_0():
     
     print("[Camera 0] Frontal thread started.")
     
-    while running:
+    while running and not camera_stop_event.is_set():
         success, frame = cap.read()
         if not success:
             read_failures += 1
@@ -236,32 +465,44 @@ def camera_loop_0():
             time.sleep(0.03)
             continue
         read_failures = 0
+        captured_ns = time.perf_counter_ns()
         frame_at = time.time()
-            
-        frame = cv2.flip(frame, 1)
+        raw_frame = frame.copy()
         h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb)
         
+        locked_landmarks = None
+        pose_sample = None
         if results.pose_landmarks:
-            mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+            locked_landmarks = identity_lock.update(results.pose_landmarks, frame_at)
+            draw_gait_skeleton(frame, locked_landmarks)
             with camera_roles_lock:
                 use_for_gait = camera_roles_swapped
             if use_for_gait:
                 try:
-                    sample = pose_sample_from_landmarks(results.pose_landmarks, w, h)
-                    if sample is not None:
-                        store_sagittal_sample(sample, frame_at)
+                    pose_sample = pose_sample_from_landmarks(locked_landmarks, w, h)
+                    if pose_sample is not None:
+                        draw_sagittal_metrics(frame, locked_landmarks, pose_sample, w, h)
                 except Exception:
-                    pass
+                    pose_sample = None
+            try:
+                submit_camera_pose(
+                    0, locked_landmarks, pose_sample, frame_at, captured_ns, w, h
+                )
+            except Exception:
+                pass
             
         with frame_lock_0:
             latest_frame_0 = frame.copy()
+            latest_raw_frame_0 = raw_frame
             latest_frame_0_at = frame_at
-            if results.pose_landmarks:
+            latest_frame_0_ns = captured_ns
+            if locked_landmarks is not None:
                 latest_pose_0_at = frame_at
             
-        time.sleep(0.03)
+        if camera_stop_event.wait(CAMERA_FRAME_DELAY_SECONDS):
+            break
         
     if cap is not None:
         cap.release()
@@ -270,11 +511,12 @@ def camera_loop_0():
 
 def camera_loop_1():
     """Camera index 1: Sagittal view (does joints calculations & recording buffers)"""
-    global latest_frame_1, latest_frame_1_at, latest_pose_1_at, running, is_recording, record_start_time
+    global latest_frame_1, latest_raw_frame_1, latest_frame_1_at, latest_frame_1_ns, latest_pose_1_at, running, is_recording, record_start_time
     global recorded_timestamps, recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle
     global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt, recorded_trunk_tilt
     
     pose = create_pose_detector()
+    identity_lock = PoseIdentityLock()
     camera_index = CAMERA_FRONTAL_INDEX if SINGLE_CAMERA_MODE else CAMERA_SAGITTAL_INDEX
     cap = wait_for_camera(camera_index, 'Camera 1 / sagittal')
     if cap is None:
@@ -285,7 +527,7 @@ def camera_loop_1():
     
     print("[Camera 1] Sagittal thread started.")
     
-    while running:
+    while running and not camera_stop_event.is_set():
         success, frame = cap.read()
         if not success:
             read_failures += 1
@@ -300,97 +542,40 @@ def camera_loop_1():
             time.sleep(0.05)
             continue
         read_failures = 0
+        captured_ns = time.perf_counter_ns()
         frame_at = time.time()
-            
-        frame = cv2.flip(frame, 1)
+        raw_frame = frame.copy()
         h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb)
         
-        right_knee_angle = 0
-        left_knee_angle = 0
-        right_ankle_angle = 0
-        left_ankle_angle = 0
-        right_hip_angle = 0
-        left_hip_angle = 0
-        pelvic_tilt_deg = 0.0
-        trunk_tilt_deg = 0.0
-        pose_valid = False
-        
-        if results.pose_landmarks:
-            mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            lm = results.pose_landmarks.landmark
-            try:
-                # Right leg
-                r_shoulder = [lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x * w, lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y * h]
-                r_hip = [lm[mp_pose.PoseLandmark.RIGHT_HIP.value].x * w, lm[mp_pose.PoseLandmark.RIGHT_HIP.value].y * h]
-                r_knee = [lm[mp_pose.PoseLandmark.RIGHT_KNEE.value].x * w, lm[mp_pose.PoseLandmark.RIGHT_KNEE.value].y * h]
-                r_ankle = [lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x * w, lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y * h]
-                r_heel = [lm[mp_pose.PoseLandmark.RIGHT_HEEL.value].x * w, lm[mp_pose.PoseLandmark.RIGHT_HEEL.value].y * h]
-                
-                right_hip_angle = calculate_angle(r_shoulder, r_hip, r_knee)
-                right_knee_angle = calculate_angle(r_hip, r_knee, r_ankle)
-                right_ankle_angle = calculate_angle(r_knee, r_ankle, r_heel)
-                
-                # Left leg
-                l_shoulder = [lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x * w, lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y * h]
-                l_hip = [lm[mp_pose.PoseLandmark.LEFT_HIP.value].x * w, lm[mp_pose.PoseLandmark.LEFT_HIP.value].y * h]
-                l_knee = [lm[mp_pose.PoseLandmark.LEFT_KNEE.value].x * w, lm[mp_pose.PoseLandmark.LEFT_KNEE.value].y * h]
-                l_ankle = [lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].x * w, lm[mp_pose.PoseLandmark.LEFT_ANKLE.value].y * h]
-                l_heel = [lm[mp_pose.PoseLandmark.LEFT_HEEL.value].x * w, lm[mp_pose.PoseLandmark.LEFT_HEEL.value].y * h]
-                
-                left_hip_angle = calculate_angle(l_shoulder, l_hip, l_knee)
-                left_knee_angle = calculate_angle(l_hip, l_knee, l_ankle)
-                left_ankle_angle = calculate_angle(l_knee, l_ankle, l_heel)
-                
-                # Pelvic tilt
-                dy = l_hip[1] - r_hip[1]
-                dx = l_hip[0] - r_hip[0]
-                pelvic_tilt_deg = math.atan2(dy, dx) * 180.0 / math.pi
+        pose_sample = None
+        locked_landmarks = None
 
-                mid_shoulder = [(l_shoulder[0] + r_shoulder[0]) / 2,
-                                (l_shoulder[1] + r_shoulder[1]) / 2]
-                mid_hip = [(l_hip[0] + r_hip[0]) / 2,
-                           (l_hip[1] + r_hip[1]) / 2]
-                trunk_tilt_deg = normalize_axial_angle(math.degrees(math.atan2(
-                    mid_shoulder[0] - mid_hip[0],
-                    mid_hip[1] - mid_shoulder[1],
-                )))
-                joint_angles = (
-                    right_knee_angle, left_knee_angle,
-                    right_ankle_angle, left_ankle_angle,
-                    right_hip_angle, left_hip_angle,
+        if results.pose_landmarks:
+            locked_landmarks = identity_lock.update(results.pose_landmarks, frame_at)
+            draw_gait_skeleton(frame, locked_landmarks)
+            with camera_roles_lock:
+                use_for_gait = not camera_roles_swapped
+            if use_for_gait:
+                try:
+                    pose_sample = pose_sample_from_landmarks(locked_landmarks, w, h)
+                    if pose_sample is not None:
+                        draw_sagittal_metrics(frame, locked_landmarks, pose_sample, w, h)
+                except Exception:
+                    pose_sample = None
+            try:
+                submit_camera_pose(
+                    1,
+                    locked_landmarks,
+                    pose_sample if use_for_gait else None,
+                    frame_at,
+                    captured_ns,
+                    w,
+                    h,
                 )
-                pose_valid = (
-                    all(value > 0 for value in joint_angles)
-                    and all(math.isfinite(float(value)) for value in (
-                        *joint_angles, pelvic_tilt_deg, trunk_tilt_deg,
-                    ))
-                )
-                
-                draw_overlay_text(frame, f"Hong P: {right_hip_angle}*", (int(r_hip[0]) + 10, int(r_hip[1])), color=(0, 255, 255))
-                draw_overlay_text(frame, f"Hong T: {left_hip_angle}*", (int(l_hip[0]) + 10, int(l_hip[1])), color=(255, 150, 0))
-                draw_overlay_text(frame, f"Goi P: {right_knee_angle}*", (int(r_knee[0]) + 10, int(r_knee[1])), color=(0, 255, 255))
-                draw_overlay_text(frame, f"Goi T: {left_knee_angle}*", (int(l_knee[0]) + 10, int(l_knee[1])), color=(255, 150, 0))
-                draw_overlay_text(frame, f"Than: {trunk_tilt_deg:.1f}*", (20, 80), color=(100, 255, 100))
             except Exception:
                 pass
-
-        with camera_roles_lock:
-            use_for_gait = not camera_roles_swapped
-        if pose_valid and use_for_gait:
-            sample = {
-                'time': frame_at,
-                'left_knee': left_knee_angle,
-                'right_knee': right_knee_angle,
-                'left_ankle': left_ankle_angle,
-                'right_ankle': right_ankle_angle,
-                'pelvic_tilt': pelvic_tilt_deg,
-                'trunk_tilt': trunk_tilt_deg,
-                'left_hip': left_hip_angle,
-                'right_hip': right_hip_angle,
-            }
-            store_sagittal_sample(sample, frame_at)
             latest_pose_1_at = frame_at
                 
         if is_recording:
@@ -400,23 +585,101 @@ def camera_loop_1():
             
         with frame_lock_1:
             latest_frame_1 = frame.copy()
+            latest_raw_frame_1 = raw_frame
             latest_frame_1_at = frame_at
+            latest_frame_1_ns = captured_ns
             
-        time.sleep(0.03)
+        if camera_stop_event.wait(CAMERA_FRAME_DELAY_SECONDS):
+            break
         
     if cap is not None:
         cap.release()
     pose.close()
     print("[Camera 1] thread stopped.")
 
-# Do not open the same Windows camera from two threads in single-camera mode.
+# Camera workers start only after the setup screen commits a device selection.
 thread_0 = None
-if not SINGLE_CAMERA_MODE:
-    thread_0 = threading.Thread(target=camera_loop_0, daemon=True)
-    thread_0.start()
-thread_1 = threading.Thread(target=camera_loop_1, daemon=True)
-thread_1.start()
+thread_1 = None
+camera_workers_started = False
+camera_worker_lock = threading.Lock()
+camera_stop_event = threading.Event()
+
+
+def start_camera_workers():
+    """Start capture threads once after camera roles have been configured."""
+    global thread_0, thread_1, camera_workers_started
+    with camera_worker_lock:
+        if camera_workers_started:
+            return False
+        if not camera_configured or CAMERA_FRONTAL_INDEX is None:
+            raise RuntimeError("Camera roles have not been configured.")
+        if not SINGLE_CAMERA_MODE and CAMERA_SAGITTAL_INDEX is None:
+            raise RuntimeError("A sagittal camera must be selected in two-camera mode.")
+        camera_stop_event.clear()
+        if not SINGLE_CAMERA_MODE:
+            thread_0 = threading.Thread(
+                target=camera_loop_0,
+                name="camera-frontal",
+                daemon=True,
+            )
+            thread_0.start()
+        else:
+            thread_0 = None
+        thread_1 = threading.Thread(
+            target=camera_loop_1,
+            name="camera-sagittal",
+            daemon=True,
+        )
+        thread_1.start()
+        camera_workers_started = True
+        return True
+
+
+def stop_camera_workers(timeout=6.0):
+    """Stop only camera capture workers and release devices for reconfiguration."""
+    global thread_0, thread_1, camera_workers_started
+    global latest_frame_0, latest_frame_1, latest_raw_frame_0, latest_raw_frame_1
+    global latest_frame_0_at, latest_frame_1_at, latest_frame_0_ns, latest_frame_1_ns
+    global latest_pose_0_at, latest_pose_1_at, latest_sagittal_pose_at
+
+    with camera_worker_lock:
+        if not camera_workers_started:
+            return False
+        camera_stop_event.set()
+        workers = [worker for worker in (thread_0, thread_1) if worker is not None]
+        deadline = time.monotonic() + max(0.5, float(timeout))
+        for worker in workers:
+            remaining = max(0.0, deadline - time.monotonic())
+            worker.join(remaining)
+        alive = [worker.name for worker in workers if worker.is_alive()]
+        if alive:
+            raise RuntimeError(
+                "Camera worker did not stop in time: " + ", ".join(alive)
+            )
+
+        thread_0 = None
+        thread_1 = None
+        camera_workers_started = False
+        with frame_lock_0:
+            latest_frame_0 = None
+            latest_raw_frame_0 = None
+            latest_frame_0_at = 0.0
+            latest_frame_0_ns = 0
+            latest_pose_0_at = 0.0
+        with frame_lock_1:
+            latest_frame_1 = None
+            latest_raw_frame_1 = None
+            latest_frame_1_at = 0.0
+            latest_frame_1_ns = 0
+            latest_pose_1_at = 0.0
+        latest_sagittal_pose_at = 0.0
+        return True
+
+
+if camera_configured:
+    start_camera_workers()
 # Optional hardware/media services are installed after camera state exists.
+
 import sys
 from realtime_services import install_realtime_services
 install_realtime_services(app, sys.modules[__name__])
@@ -479,7 +742,8 @@ def save_recorded_data_to_db():
         recorded_left_ankle, recorded_right_ankle,
         recorded_left_hip, recorded_right_hip,
         recorded_pelvic_tilt,
-        healthy_leg, active_session_id
+        healthy_leg, active_session_id,
+        recorded_pose_quality,
     )
     
     conn = get_db_connection()
@@ -709,7 +973,7 @@ def start_recording(
     global is_recording, record_start_time, record_duration, healthy_leg, prosthetic_leg
     global recorded_timestamps, recorded_left_knee, recorded_right_knee, recorded_left_ankle, recorded_right_ankle
     global recorded_left_hip, recorded_right_hip, recorded_pelvic_tilt, recorded_trunk_tilt
-    global active_session_id, active_scan_type, session_markers
+    global recorded_pose_quality, active_session_id, active_scan_type, session_markers
     
     recorded_timestamps = []
     recorded_left_knee = []
@@ -720,7 +984,9 @@ def start_recording(
     recorded_trunk_tilt = []
     recorded_left_hip = []
     recorded_right_hip = []
+    recorded_pose_quality = []
     session_markers = []
+    camera_synchronizer.reset()
     
     active_session_id = session_id
     active_scan_type = scan_type
@@ -780,7 +1046,8 @@ def create_segment(session_id: str, data: dict):
             recorded_left_ankle, recorded_right_ankle,
             recorded_left_hip, recorded_right_hip,
             recorded_pelvic_tilt,
-            healthy_leg, session_id
+            healthy_leg, session_id,
+            recorded_pose_quality,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -904,10 +1171,12 @@ def get_angles():
         "total_frames_collected": len(recorded_left_knee)
     }
 
-@app.on_event("shutdown")
 def shutdown_event():
     global running
     running = False
+    camera_stop_event.set()
+
+app.router.add_event_handler("shutdown", shutdown_event)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

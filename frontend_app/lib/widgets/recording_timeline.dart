@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../models/analysis_segment.dart';
-import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 
 class RecordingTimeline extends StatelessWidget {
@@ -19,9 +17,8 @@ class RecordingTimeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final session = context.watch<SessionProvider>().session;
+    final elapsed = duration < 0 ? 0.0 : duration;
     final maxSec = duration < 1 ? 1.0 : duration;
-    final value = session.playbackSec.clamp(0.0, maxSec);
     return Container(
       height: 64,
       padding: const EdgeInsets.fromLTRB(14, 5, 14, 4),
@@ -79,11 +76,11 @@ class RecordingTimeline extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                SizedBox(
+                const SizedBox(
                   width: 58,
                   child: Text(
-                    '${value.toStringAsFixed(1)} s',
-                    style: const TextStyle(
+                    '0.0 s',
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
                       color: AppColors.accent,
@@ -91,28 +88,51 @@ class RecordingTimeline extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 2,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 5,
+                  child: Semantics(
+                    label: 'Thời gian ghi trực tiếp',
+                    value: '${elapsed.toStringAsFixed(1)} giây',
+                    readOnly: true,
+                    child: SizedBox(
+                      height: 18,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: elapsed > 0
+                                    ? AppColors.accent
+                                    : AppColors.border,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: elapsed > 0 ? null : 0,
+                            right: elapsed > 0 ? 0 : null,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: elapsed > 0
+                                    ? AppColors.accent
+                                    : AppColors.border,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 10,
-                      ),
-                    ),
-                    child: Slider(
-                      value: value,
-                      min: 0,
-                      max: maxSec,
-                      onChanged: context.read<SessionProvider>().setPlaybackSec,
                     ),
                   ),
                 ),
                 SizedBox(
                   width: 58,
                   child: Text(
-                    '${maxSec.toStringAsFixed(1)} s',
+                    '${elapsed.toStringAsFixed(1)} s',
                     textAlign: TextAlign.end,
                     style: const TextStyle(
                       fontFamily: 'monospace',

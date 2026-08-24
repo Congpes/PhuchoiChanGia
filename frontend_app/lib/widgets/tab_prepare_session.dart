@@ -1,9 +1,27 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+
 import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import 'app_alert.dart';
 import 'video_stream.dart';
+
+class _CameraRoleSelection {
+  const _CameraRoleSelection({
+    required this.frontalIndex,
+    required this.sagittalIndex,
+    required this.singleCameraMode,
+  });
+
+  final int frontalIndex;
+  final int sagittalIndex;
+  final bool singleCameraMode;
+}
 
 class TabPrepareSession extends StatefulWidget {
   const TabPrepareSession({super.key});
@@ -18,6 +36,10 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
   late TextEditingController _goalsController;
   late TextEditingController _noteController;
   String _selectedNoteType = 'history';
+  bool _configuringCamera = false;
+
+  static const _cameraDiscoveryTimeout = Duration(seconds: 30);
+  static const _cameraConfigureTimeout = Duration(seconds: 15);
 
   @override
   void initState() {
@@ -59,11 +81,11 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
       _injuryController.text,
       _goalsController.text,
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đã cập nhật tiền sử chấn thương và mục tiêu điều trị.'),
-        backgroundColor: AppColors.accent,
-      ),
+    if (!mounted) return;
+    AppAlert.show(
+      context,
+      'Đã cập nhật tiền sử chấn thương và mục tiêu điều trị.',
+      tone: AppAlertTone.success,
     );
   }
 
@@ -73,13 +95,227 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
       _selectedNoteType,
       _noteController.text.trim(),
     );
+    if (!mounted) return;
     _noteController.clear();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đã thêm ghi chú lâm sàng thành công.'),
-        backgroundColor: AppColors.accent,
-      ),
+
+    AppAlert.show(
+      context,
+      'Đã thêm ghi chú lâm sàng thành công.',
+      tone: AppAlertTone.success,
     );
+  }
+
+  Future<void> _showCameraSetupDialog() async {
+    if (_configuringCamera) return;
+    setState(() => _configuringCamera = true);
+    var operation = 'dò danh sách camera';
+    try {
+      final response = await http
+          .get(Uri.parse('http://127.0.0.1:8000/camera/devices'))
+          .timeout(_cameraDiscoveryTimeout);
+      if (response.statusCode != 200) {
+        throw Exception('Không thể dò camera: ${response.body}');
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final devices = (body['devices'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const <Map<String, dynamic>>[];
+      if (devices.isEmpty) {
+        throw Exception(
+          body['message']?.toString() ??
+              'Không tìm thấy camera. Kiểm tra cáp USB và đóng ứng dụng đang chiếm camera.',
+        );
+      }
+      final indexes =
+          devices.map((device) => (device['index'] as num).toInt()).toList();
+      final configuration = body['configuration'] is Map
+          ? Map<String, dynamic>.from(body['configuration'] as Map)
+          : const <String, dynamic>{};
+      int? configuredIndex(String key) {
+        final value = configuration[key];
+        final index = value is num ? value.toInt() : null;
+        return index != null && indexes.contains(index) ? index : null;
+      }
+
+      if (!mounted) return;
+      final selection = await showDialog<_CameraRoleSelection>(
+        context: context,
+        builder: (dialogContext) {
+          var frontalIndex = configuredIndex('frontalIndex') ??
+              (indexes.length >= 3
+                  ? indexes[indexes.length - 2]
+                  : indexes.first);
+          var sagittalIndex = configuredIndex('sagittalIndex') ??
+              (indexes.length >= 3
+                  ? indexes.last
+                  : indexes.length > 1
+                      ? indexes[1]
+                      : indexes.first);
+          var singleCameraMode = configuration['singleCameraMode'] == true;
+
+          String labelFor(int index) {
+            final device = devices.firstWhere(
+              (item) => (item['index'] as num?)?.toInt() == index,
+            );
+            final width = device['width']?.toString() ?? '?';
+            final height = device['height']?.toString() ?? '?';
+            return 'Camera $index · $width×$height';
+          }
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.video_settings_outlined, size: 20),
+                  SizedBox(width: 8),
+                  Text('Thiết lập camera'),
+                ],
+              ),
+              content: SizedBox(
+                width: 430,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Chọn camera cho góc chính diện và mặt phẳng dọc. Có thể đổi ngay trong phiên; hai luồng hình sẽ tạm dừng vài giây khi áp dụng.',
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<int>(
+                      key: ValueKey('prepare-frontal-$frontalIndex'),
+                      initialValue: frontalIndex,
+                      decoration: const InputDecoration(
+                        labelText: 'Camera chính diện',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: indexes
+                          .map((index) => DropdownMenuItem(
+                                value: index,
+                                child: Text(labelFor(index)),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => frontalIndex = value);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<int>(
+                      key: ValueKey(
+                          'prepare-sagittal-${singleCameraMode ? frontalIndex : sagittalIndex}'),
+                      initialValue:
+                          singleCameraMode ? frontalIndex : sagittalIndex,
+                      decoration: const InputDecoration(
+                        labelText: 'Camera mặt phẳng dọc',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: indexes
+                          .map((index) => DropdownMenuItem(
+                                value: index,
+                                child: Text(labelFor(index)),
+                              ))
+                          .toList(),
+                      onChanged: singleCameraMode
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setDialogState(() => sagittalIndex = value);
+                              }
+                            },
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: singleCameraMode,
+                      title: const Text(
+                        'Chỉ dùng một camera (mặt phẳng dọc)',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      onChanged: (value) => setDialogState(
+                        () => singleCameraMode = value ?? false,
+                      ),
+                    ),
+                    if (!singleCameraMode && frontalIndex == sagittalIndex)
+                      const Text(
+                        'Hai vai trò phải dùng hai camera khác nhau.',
+                        style:
+                            TextStyle(fontSize: 10, color: AppColors.critical),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('HỦY'),
+                ),
+                FilledButton.icon(
+                  onPressed: !singleCameraMode && frontalIndex == sagittalIndex
+                      ? null
+                      : () => Navigator.pop(
+                            dialogContext,
+                            _CameraRoleSelection(
+                              frontalIndex: frontalIndex,
+                              sagittalIndex: sagittalIndex,
+                              singleCameraMode: singleCameraMode,
+                            ),
+                          ),
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('ÁP DỤNG'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      if (selection == null) return;
+      operation = 'áp dụng cấu hình hai camera';
+      final apply = await http
+          .post(
+            Uri.parse('http://127.0.0.1:8000/camera/configure'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'frontalIndex': selection.frontalIndex,
+              'sagittalIndex': selection.sagittalIndex,
+              'singleCameraMode': selection.singleCameraMode,
+            }),
+          )
+          .timeout(_cameraConfigureTimeout);
+      if (apply.statusCode != 200) {
+        throw Exception('Không thể áp dụng camera: ${apply.body}');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      setState(() {});
+      AppAlert.show(
+        context,
+        'Đã áp dụng cài đặt camera. Kiểm tra hai góc quay trước khi ghi hình.',
+        tone: AppAlertTone.success,
+      );
+    } on TimeoutException {
+      if (!mounted) return;
+      AppAlert.show(
+        context,
+        'Quá thời gian khi $operation. Backend có thể vẫn đang kiểm tra driver camera. '
+        'Hãy đóng Camera/Zoom/Meet, rút cắm lại USB rồi thử một lần nữa.',
+        tone: AppAlertTone.error,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      AppAlert.show(
+        context,
+        error.toString(),
+        tone: AppAlertTone.error,
+      );
+    } finally {
+      if (mounted) setState(() => _configuringCamera = false);
+    }
   }
 
   @override
@@ -149,20 +385,46 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                       tooltip: 'Quay lại Hồ sơ bệnh nhân',
                     ),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Xem trước góc quay Camera & Đo lường sinh học',
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary),
+                    const Expanded(
+                      child: Text(
+                        'Xem trước góc quay Camera & Đo lường sinh học',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _configuringCamera ? null : _showCameraSetupDialog,
+                      icon: _configuringCamera
+                          ? const SizedBox(
+                              width: 15,
+                              height: 15,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 1.8),
+                            )
+                          : const Icon(Icons.video_settings_outlined, size: 17),
+                      label: const Text('CÀI CAMERA'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.accent,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Bác sĩ kiểm tra góc đặt camera để đảm bảo MediaPipe tracking khớp hông, gối, cổ chân chính xác.',
-                  style:
-                      TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                Text(
+                  'Chân giả bên ${patient.prostheticLeg == LegSide.left ? 'TRÁI' : 'PHẢI'} phải ở phía gần camera ngang. '
+                  'Chỉ các frame thấy rõ hông–gối–cổ chân với visibility ≥ 0,80 mới được dùng tính góc.',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Expanded(
