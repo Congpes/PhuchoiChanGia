@@ -30,6 +30,7 @@ frontend_app/.flutter-plugins-dependencies
 .codex-tmp/
 .fsr_doc_media/
 .agents/
+.worktrees/
 
 # Generated document/render scratch files
 .tmp/
