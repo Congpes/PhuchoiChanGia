@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 
 import '../models/analysis_segment.dart';
 import '../theme/app_theme.dart';
@@ -9,16 +12,23 @@ class RecordingTimeline extends StatelessWidget {
     required this.duration,
     required this.segments,
     this.pendingStart,
+    this.totalDuration,
   });
 
   final double duration;
   final List<AnalysisSegment> segments;
   final double? pendingStart;
+  final double? totalDuration;
 
   @override
   Widget build(BuildContext context) {
     final elapsed = duration < 0 ? 0.0 : duration;
-    final maxSec = duration < 1 ? 1.0 : duration;
+    final replayTotal =
+        totalDuration != null && totalDuration! > 0 ? totalDuration! : null;
+    final maxSec = replayTotal ?? (duration < 1 ? 1.0 : duration);
+    final progress = replayTotal == null
+        ? (elapsed > 0 ? 1.0 : 0.0)
+        : (elapsed / maxSec).clamp(0.0, 1.0);
     return Container(
       height: 64,
       padding: const EdgeInsets.fromLTRB(14, 5, 14, 4),
@@ -50,8 +60,9 @@ class RecordingTimeline extends StatelessWidget {
                       top: 3,
                       height: 6,
                       child: Tooltip(
-                        message:
-                            '${segment.label}: ${segment.start.toStringAsFixed(1)}\u2013${segment.end.toStringAsFixed(1)} s',
+                        message: context.tr(
+                          '${segment.label}: ${segment.start.toStringAsFixed(1)}\u2013${segment.end.toStringAsFixed(1)} s',
+                        ),
                         child: Container(
                           decoration: BoxDecoration(
                             color: AppColors.accentGreen,
@@ -89,42 +100,53 @@ class RecordingTimeline extends StatelessWidget {
                 ),
                 Expanded(
                   child: Semantics(
-                    label: 'Thời gian ghi trực tiếp',
-                    value: '${elapsed.toStringAsFixed(1)} giây',
+                    label: context.tr('Thời gian ghi trực tiếp'),
+                    value: context.tr('${elapsed.toStringAsFixed(1)} giây'),
                     readOnly: true,
                     child: SizedBox(
                       height: 18,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            child: Container(
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: elapsed > 0
-                                    ? AppColors.accent
-                                    : AppColors.border,
-                                borderRadius: BorderRadius.circular(2),
+                      child: LayoutBuilder(
+                        builder: (_, constraints) => Stack(
+                          alignment: Alignment.centerLeft,
+                          children: [
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              child: Container(
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: AppColors.border,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
                               ),
                             ),
-                          ),
-                          Positioned(
-                            left: elapsed > 0 ? null : 0,
-                            right: elapsed > 0 ? 0 : null,
-                            child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                color: elapsed > 0
-                                    ? AppColors.accent
-                                    : AppColors.border,
-                                shape: BoxShape.circle,
+                            if (progress > 0)
+                              Positioned(
+                                left: 0,
+                                width: constraints.maxWidth * progress,
+                                child: Container(
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.accent,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                            Positioned(
+                              left: (constraints.maxWidth - 10) * progress,
+                              child: Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: progress > 0
+                                      ? AppColors.accent
+                                      : AppColors.border,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -132,7 +154,7 @@ class RecordingTimeline extends StatelessWidget {
                 SizedBox(
                   width: 58,
                   child: Text(
-                    '${elapsed.toStringAsFixed(1)} s',
+                    '${(replayTotal ?? elapsed).toStringAsFixed(1)} s',
                     textAlign: TextAlign.end,
                     style: const TextStyle(
                       fontFamily: 'monospace',

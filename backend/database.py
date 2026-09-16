@@ -3,9 +3,15 @@ import sqlite3
 import math
 import json
 
-DB_FILE = os.path.join(os.path.dirname(__file__), "gait_analysis.db")
+DB_FILE = os.path.abspath(
+    os.getenv(
+        "GAIT_DB_FILE",
+        os.path.join(os.path.dirname(__file__), "gait_analysis.db"),
+    )
+)
 
 def get_db_connection():
+    os.makedirs(os.path.dirname(os.path.abspath(DB_FILE)), exist_ok=True)
     conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -16,6 +22,11 @@ def init_db():
     """Create any missing database objects without deleting existing data."""
     conn = get_db_connection()
     cursor = conn.cursor()
+    # WAL permits realtime readers and short clinical-data writes to coexist
+    # without blocking camera/archive threads. NORMAL remains crash-safe while
+    # avoiding a full disk sync for every small UI update.
+    cursor.execute("PRAGMA journal_mode = WAL;")
+    cursor.execute("PRAGMA synchronous = NORMAL;")
     
     # Create Patients Table
     cursor.execute("""
@@ -25,6 +36,8 @@ def init_db():
         age INTEGER CHECK (age > 0 AND age <= 120),
         height_cm REAL NOT NULL,
         weight_kg REAL NOT NULL,
+        left_leg_length_cm REAL,
+        right_leg_length_cm REAL,
         healthy_leg TEXT CHECK(healthy_leg IN ('LEFT', 'RIGHT')),
         prosthetic_leg TEXT CHECK(prosthetic_leg IN ('LEFT', 'RIGHT')),
         injury_history TEXT DEFAULT '',
@@ -39,6 +52,7 @@ def init_db():
         patient_id TEXT,
         created_at TEXT NOT NULL,
         is_practice_mode INTEGER DEFAULT 0,
+        is_reference INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE
     );
     """)
@@ -75,6 +89,11 @@ def init_db():
         sagittal_frame_count INTEGER NOT NULL DEFAULT 0,
         status TEXT CHECK(status IN ('recording', 'complete', 'interrupted'))
             NOT NULL DEFAULT 'recording',
+        reference_status TEXT CHECK(reference_status IN ('none', 'draft', 'approved'))
+            NOT NULL DEFAULT 'none',
+        capture_kind TEXT NOT NULL DEFAULT 'legacy_annotated',
+        analysis_revision INTEGER NOT NULL DEFAULT 0,
+        last_analyzed_at TEXT,
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
     """)
@@ -105,6 +124,43 @@ def init_db():
         recorded_at TEXT NOT NULL,
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
         FOREIGN KEY(segment_id) REFERENCES segments(id) ON DELETE SET NULL
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS fsr_region_analyses (
+        scan_id TEXT PRIMARY KEY,
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS gait_cycle_analyses (
+        scan_id TEXT PRIMARY KEY,
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+    );
+    """)
+
+    # Every explicit re-analysis is retained as a versioned derived result.
+    # The immutable camera/FSR archive remains the source of truth.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS analysis_runs (
+        id TEXT PRIMARY KEY,
+        scan_id TEXT NOT NULL,
+        archive_id TEXT,
+        algorithm_version TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        gait_json TEXT NOT NULL,
+        fsr_json TEXT NOT NULL,
+        pose_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'complete',
+        is_current INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE,
+        FOREIGN KEY(archive_id) REFERENCES recording_archives(id) ON DELETE CASCADE
     );
     """)
     
@@ -163,9 +219,48 @@ def init_db():
     );
     """)
     
+    # Migrate databases created before anthropometric camera scaling was added.
+    patient_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(patients)").fetchall()
+    }
+    if "left_leg_length_cm" not in patient_columns:
+        cursor.execute("ALTER TABLE patients ADD COLUMN left_leg_length_cm REAL")
+    if "right_leg_length_cm" not in patient_columns:
+        cursor.execute("ALTER TABLE patients ADD COLUMN right_leg_length_cm REAL")
+    session_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    if "is_reference" not in session_columns:
+        cursor.execute(
+            "ALTER TABLE sessions ADD COLUMN is_reference INTEGER NOT NULL DEFAULT 0"
+        )
+    archive_columns = {
+        row[1]
+        for row in cursor.execute("PRAGMA table_info(recording_archives)").fetchall()
+    }
+    if "reference_status" not in archive_columns:
+        cursor.execute(
+            """ALTER TABLE recording_archives
+               ADD COLUMN reference_status TEXT NOT NULL DEFAULT 'none'"""
+        )
+    if "capture_kind" not in archive_columns:
+        cursor.execute(
+            """ALTER TABLE recording_archives
+               ADD COLUMN capture_kind TEXT NOT NULL DEFAULT 'legacy_annotated'"""
+        )
+    if "analysis_revision" not in archive_columns:
+        cursor.execute(
+            """ALTER TABLE recording_archives
+               ADD COLUMN analysis_revision INTEGER NOT NULL DEFAULT 0"""
+        )
+    if "last_analyzed_at" not in archive_columns:
+        cursor.execute(
+            "ALTER TABLE recording_archives ADD COLUMN last_analyzed_at TEXT"
+        )
+
     # Keep schema changes explicit and traceable. Future migrations should bump
     # this value after applying their ALTER/CREATE statements transactionally.
-    cursor.execute("PRAGMA user_version = 2;")
+    cursor.execute("PRAGMA user_version = 6;")
 
     # Index foreign keys and common history lookups. SQLite does not create
     # indexes automatically for child-key columns.
@@ -178,6 +273,47 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_session ON clinical_notes(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempts_patient ON practice_attempts(patient_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempts_exercise ON practice_attempts(exercise_id);")
+    cursor.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_scans_one_baseline_per_session
+           ON scans(session_id) WHERE scan_type = 'baseline'"""
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archives_started ON recording_archives(started_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analysis_runs_scan ON analysis_runs(scan_id, revision)"
+    )
+    cursor.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_runs_current
+           ON analysis_runs(scan_id) WHERE is_current = 1"""
+    )
+
+    # Analysis tables are installed by the realtime module for compatibility
+    # with existing databases. Triggers ensure patient/session cascade deletes
+    # cannot leave report rows detached from their source scan.
+    cursor.execute(
+        """CREATE TRIGGER IF NOT EXISTS trg_scans_delete_fsr_analysis
+           AFTER DELETE ON scans BEGIN
+             DELETE FROM fsr_region_analyses WHERE scan_id = OLD.id;
+           END"""
+    )
+    cursor.execute(
+        """CREATE TRIGGER IF NOT EXISTS trg_scans_delete_gait_analysis
+           AFTER DELETE ON scans BEGIN
+             DELETE FROM gait_cycle_analyses WHERE scan_id = OLD.id;
+           END"""
+    )
+    cursor.execute(
+        """CREATE TRIGGER IF NOT EXISTS trg_scans_delete_orphan_segment
+           AFTER DELETE ON scans
+           WHEN OLD.segment_id IS NOT NULL BEGIN
+             DELETE FROM segments
+             WHERE id = OLD.segment_id
+               AND NOT EXISTS (
+                 SELECT 1 FROM scans WHERE segment_id = OLD.segment_id
+               );
+           END"""
+    )
 
     conn.commit()
     conn.close()
@@ -190,14 +326,22 @@ def populate_demo_data():
     count = cursor.fetchone()[0]
     if count == 0:
         # Patient 1: Nguyễn Văn An (45 tuổi, cụt chân phải)
-        cursor.execute("INSERT INTO patients VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       ("p-01", "Nguyễn Văn An", 45, 172.0, 68.0, "LEFT", "RIGHT",
+        cursor.execute("""INSERT INTO patients
+                       (id, name, age, height_cm, weight_kg,
+                        left_leg_length_cm, right_leg_length_cm,
+                        healthy_leg, prosthetic_leg, injury_history, treatment_goals)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       ("p-01", "Nguyễn Văn An", 45, 172.0, 68.0, 91.0, 90.0, "LEFT", "RIGHT",
                         "Đứt dây chằng gối phải, cắt cụt 1/3 dưới đùi phải năm 2024.",
                         "Đi lại không cần gậy hỗ trợ, bước lên dốc cầu thang thăng bằng."))
         
         # Session 1
-        cursor.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
-                       ("s-01", "p-01", "2026-07-08T09:30:00Z", 0))
+        cursor.execute(
+            """INSERT INTO sessions
+               (id, patient_id, created_at, is_practice_mode, is_reference)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("s-01", "p-01", "2026-07-08T09:30:00Z", 0, 0),
+        )
         
         # Curves
         left_knee_base = [62 - math.sin(i / 10) * 12 for i in range(101)]
@@ -259,8 +403,12 @@ def populate_demo_data():
                        ("n-02", "p-01", "s-01", "scan_1", "symptom", "Cảm giác đau châm chích nhẹ vùng ụ chịu lực phía sau sau khi đi bộ 10 phút.", "2026-07-08T09:36:00Z"))
         
         # Patient 2: Lê Hoàng Nam (32 tuổi, cụt chân trái)
-        cursor.execute("INSERT INTO patients VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       ("p-02", "Lê Hoàng Nam", 32, 168.0, 58.0, "RIGHT", "LEFT",
+        cursor.execute("""INSERT INTO patients
+                       (id, name, age, height_cm, weight_kg,
+                        left_leg_length_cm, right_leg_length_cm,
+                        healthy_leg, prosthetic_leg, injury_history, treatment_goals)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       ("p-02", "Lê Hoàng Nam", 32, 168.0, 58.0, 88.0, 89.0, "RIGHT", "LEFT",
                         "Tai nạn giao thông chấn thương nát cẳng chân trái năm 2025.",
                         "Phục hồi thăng bằng lực đi bộ."))
         

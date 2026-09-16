@@ -1,6 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 
 import '../theme/app_theme.dart';
 
@@ -111,7 +114,7 @@ class _AlertCard extends StatelessWidget {
           IconButton(
             onPressed: onClose,
             icon: const Icon(Icons.close, color: Colors.white, size: 15),
-            tooltip: 'Đóng thông báo',
+            tooltip: context.tr('Đóng thông báo'),
             visualDensity: VisualDensity.compact,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
             padding: EdgeInsets.zero,

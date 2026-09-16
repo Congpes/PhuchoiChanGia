@@ -12,10 +12,12 @@ class SyncedVideoController extends ChangeNotifier {
   bool _playing = true;
   double _positionSeconds = 0;
   double _durationSeconds = 0;
+  double _playbackRate = 1.0;
 
   bool get isPlaying => _playing;
   double get positionSeconds => _positionSeconds;
   double get durationSeconds => _durationSeconds;
+  double get playbackRate => _playbackRate;
   bool get isReady => _durationSeconds > 0;
 
   void attach(String key, web.HTMLVideoElement video) {
@@ -34,6 +36,7 @@ class SyncedVideoController extends ChangeNotifier {
                 : duration;
       }
       _setTime(video, _positionSeconds);
+      video.playbackRate = _playbackRate;
       if (_playing) {
         video.play();
       }
@@ -92,6 +95,15 @@ class SyncedVideoController extends ChangeNotifier {
   }
 
   void skip(double seconds) => seek(_positionSeconds + seconds);
+
+  void setPlaybackRate(double value) {
+    if (!value.isFinite) return;
+    _playbackRate = value.clamp(0.25, 2.0).toDouble();
+    for (final video in _videos.values) {
+      video.playbackRate = _playbackRate;
+    }
+    notifyListeners();
+  }
 
   static void _setTime(web.HTMLVideoElement video, double seconds) {
     try {
@@ -153,6 +165,7 @@ Widget createVideoFileWidget(
           ..style.border = 'none'
           ..style.objectFit = 'contain'
           ..style.backgroundColor = '#0b1220';
+        video.playbackRate = controller?.playbackRate ?? 1.0;
         video.setAttribute('playsinline', 'true');
         controller?.attach(key, video);
         video.onCanPlay.listen((_) {

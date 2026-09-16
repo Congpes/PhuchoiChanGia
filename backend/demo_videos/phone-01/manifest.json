@@ -1,0 +1,32 @@
+{
+  "id": "phone-01",
+  "title": "Mẫu điện thoại 1",
+  "durationSec": 8.0,
+  "fps": 30,
+  "sources": [
+    {
+      "view": "frontal",
+      "originalFileName": "1788858919826_7312402517447231074_7312402517447231074 (1).mp4",
+      "originalSha256": "1e7f9ca5b9795412d668afae78285a549eaaa4dd804f19861c0566d0de44abed",
+      "originalRelativePath": "originals/frontal.mp4",
+      "playbackTrimStartSec": 0,
+      "decodedFrames": 240
+    },
+    {
+      "view": "sagittal",
+      "originalFileName": "1788858653011_182740831165567633_g4076104476817125513 (1).mp4",
+      "originalSha256": "6ecee6b0f60164fadda1acefec4a4181b2bf5867c6a9968e1440742acae8eced",
+      "originalRelativePath": "originals/sagittal.mp4",
+      "playbackTrimStartSec": 0,
+      "decodedFrames": 240
+    }
+  ],
+  "analysisStatus": "not_analyzed",
+  "synchronizationStatus": "unverified",
+  "candidateOffsetSec": null,
+  "fsr": null,
+  "pose": null,
+  "playbackOnly": true,
+  "originalsPreserved": true,
+  "note": "Shared playback controls do not establish measurement synchronization. No FSR or old pose/curves attached."
+}

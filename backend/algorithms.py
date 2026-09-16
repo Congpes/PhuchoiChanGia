@@ -1,6 +1,4 @@
 import numpy as np
-from scipy.signal import butter, filtfilt
-from scipy.interpolate import CubicSpline
 import math
 import json
 from database import get_db_connection
@@ -19,38 +17,16 @@ def calculate_angle(a, b, c):
         return 0
 
 def resample(data, target_len=101):
-    if not data:
-        return [0.0 for _ in range(target_len)]
-    n = len(data)
-    if n == 1:
-        return [data[0] for _ in range(target_len)]
-    try:
-        x = np.linspace(0, 1, n)
-        x_new = np.linspace(0, 1, target_len)
-        cs = CubicSpline(x, data)
-        resampled = cs(x_new)
-        return [round(float(v), 2) for v in resampled]
-    except Exception:
-        # Fallback to linear interpolation
-        resampled = []
-        for i in range(target_len):
-            idx = i * (n - 1) / (target_len - 1)
-            low = int(math.floor(idx))
-            high = int(math.ceil(idx))
-            weight = idx - low
-            val = data[low] * (1 - weight) + data[high] * weight
-            resampled.append(round(val, 2))
-        return resampled
-
-def filter_signal(data):
-    if not data or len(data) < 15:
-        return data
-    try:
-        b, a = butter(4, 0.35, btype='low')
-        filtered = filtfilt(b, a, data)
-        return [round(float(v), 2) for v in filtered]
-    except Exception:
-        return data
+    """Linear display resampling only; no smoothing or cubic overshoot."""
+    if data is None or len(data) == 0:
+        return []
+    if len(data) == 1:
+        return [float(data[0])] * target_len
+    return np.interp(
+        np.linspace(0, len(data) - 1, target_len),
+        np.arange(len(data)),
+        np.asarray(data, dtype=float),
+    ).round(4).tolist()
 
 def estimate_socket_moment(fsr_force, cop_y, ankle_y):
     lever_arm = abs(cop_y - ankle_y) / 100.0
@@ -113,7 +89,7 @@ def analyze_cropped_segment(
         ]
         if not indices:
             raise ValueError(
-                "Không có frame đạt visibility 0,80 cho chân giả trong đoạn đã chọn"
+                "Không có frame pose/visibility đạt ngưỡng cho chân giả trong đoạn đã chọn"
             )
         
     s_l_knee = [recorded_left_knee[i] for i in indices]
@@ -124,13 +100,13 @@ def analyze_cropped_segment(
     s_r_hip = [recorded_right_hip[i] for i in indices]
     s_pelvic = [recorded_pelvic_tilt[i] for i in indices]
     
-    s_l_knee_f = filter_signal(s_l_knee)
-    s_r_knee_f = filter_signal(s_r_knee)
-    s_l_ankle_f = filter_signal(s_l_ankle)
-    s_r_ankle_f = filter_signal(s_r_ankle)
-    s_l_hip_f = filter_signal(s_l_hip)
-    s_r_hip_f = filter_signal(s_r_hip)
-    s_pelvic_f = filter_signal(s_pelvic)
+    s_l_knee_f = s_l_knee
+    s_r_knee_f = s_r_knee
+    s_l_ankle_f = s_l_ankle
+    s_r_ankle_f = s_r_ankle
+    s_l_hip_f = s_l_hip
+    s_r_hip_f = s_r_hip
+    s_pelvic_f = s_pelvic
     
     knee_ref = s_l_knee_f if healthy_leg == 'LEFT' else s_r_knee_f
     peaks_idx = []

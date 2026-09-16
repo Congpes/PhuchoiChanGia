@@ -2,15 +2,28 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/localized_text.dart';
+import 'smoothed_line_chart.dart';
 import 'package:http/http.dart' as http;
 
 import '../theme/app_theme.dart';
+import 'chart_labels.dart';
+
+const _reportRightLine = Color(0xFFE07A2D);
+const _reportGrid = Color(0xFFD8DEE5);
+const _reportFrame = Color(0xFF9EA8B3);
 
 class FsrRegionAnalysis extends StatefulWidget {
-  const FsrRegionAnalysis({super.key, required this.scanId});
+  const FsrRegionAnalysis({
+    super.key,
+    required this.scanId,
+    this.presentationProfile = false,
+  });
 
   final String scanId;
+  final bool presentationProfile;
 
   @override
   State<FsrRegionAnalysis> createState() => _FsrRegionAnalysisState();
@@ -18,7 +31,7 @@ class FsrRegionAnalysis extends StatefulWidget {
 
 class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
   Map<String, dynamic>? _data;
-  int _windowSize = 7;
+  final int _windowSize = 0;
   int _activeRegion = 0;
   bool _loading = false;
   String? _error;
@@ -32,7 +45,10 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
   @override
   void didUpdateWidget(covariant FsrRegionAnalysis oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scanId != widget.scanId) _load();
+    if (oldWidget.scanId != widget.scanId ||
+        oldWidget.presentationProfile != widget.presentationProfile) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -43,7 +59,7 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
     try {
       final response = await http.get(
         Uri.parse(
-          'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis?window=$_windowSize',
+          'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis?window=$_windowSize&demo60=${widget.presentationProfile}',
         ),
       );
       if (response.statusCode != 200) {
@@ -82,25 +98,40 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
     }
 
     const items = [
-      ('heel', 'M\u1ee8C T\u1ea2I V\u00d9NG G\u00d3T - PH\u00c2N T\u00cdCH'),
-      (
-        'midfoot',
-        'M\u1ee8C T\u1ea2I V\u00d9NG GI\u1eeeA B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
-      ),
-      (
-        'forefoot',
-        'M\u1ee8C T\u1ea2I V\u00d9NG TR\u01af\u1edaC B\u00c0N CH\u00c2N - PH\u00c2N T\u00cdCH'
-      ),
+      ('heel', 'Lực gót'),
+      ('midfoot', 'Lực giữa bàn chân'),
+      ('forefoot', 'Lực trước bàn chân'),
     ];
-    final healthySide = _data?['healthySide']?.toString().toLowerCase();
     String sideLabel(String side) {
-      final sideName = side == 'left' ? 'trái' : 'phải';
-      return side == healthySide
-          ? 'Chân $sideName · lành'
-          : 'Chân $sideName · giả';
+      return chartLegLabel(side);
     }
 
     final pairCount = (_data?['pairCount'] as num?)?.toInt() ?? 0;
+    final qualityExcludedPairCount =
+        (_data?['qualityExcludedPairCount'] as num?)?.toInt() ?? 0;
+    final steadyStateExcludedPairCount =
+        (_data?['steadyStateExcludedPairCount'] as num?)?.toInt() ?? 0;
+    final acquisitionQuality = _data?['acquisitionQuality'];
+    final rejectedBySide = acquisitionQuality is Map
+        ? acquisitionQuality['qualityRejectedSteps'] ??
+            acquisitionQuality['rejectedSteps']
+        : null;
+    final qualityRejectedStepCount = rejectedBySide is Map
+        ? rejectedBySide.values
+            .whereType<num>()
+            .fold<int>(0, (sum, value) => sum + value.toInt())
+        : 0;
+    final hasStandardDeviation = pairCount >= 2;
+    final qualitySuffix = [
+      if (qualityExcludedPairCount > 0)
+        'loại $qualityExcludedPairCount cặp lỗi đo',
+      if (qualityRejectedStepCount > 0)
+        'loại $qualityRejectedStepCount bước lỗi đo',
+      if (steadyStateExcludedPairCount > 0)
+        'loại $steadyStateExcludedPairCount cặp chuyển tiếp',
+    ];
+    final qualitySummary =
+        qualitySuffix.isEmpty ? '' : ' · ${qualitySuffix.join(' · ')}';
     return Column(
       children: [
         Container(
@@ -116,32 +147,20 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
               const Icon(Icons.analytics_outlined,
                   size: 15, color: AppColors.accent),
               const SizedBox(width: 7),
-              Text(
-                'Mean ± SD · $pairCount cặp trái–phải hợp lệ',
-                style:
-                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
-              ),
-              const Spacer(),
-              const Text('Cửa sổ phân tích',
-                  style:
-                      TextStyle(fontSize: 9, color: AppColors.textSecondary)),
-              const SizedBox(width: 6),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  value: _windowSize,
-                  isDense: true,
-                  items: const [5, 7]
-                      .map((value) => DropdownMenuItem(
-                            value: value,
-                            child: Text('$value cặp',
-                                style: const TextStyle(fontSize: 10)),
-                          ))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null || value == _windowSize) return;
-                    setState(() => _windowSize = value);
-                    _load();
-                  },
+              Expanded(
+                child: Text(
+                  widget.presentationProfile
+                      ? 'Dữ liệu minh họa · 60 kg · hai chân lành · Mean ± SD'
+                      : hasStandardDeviation
+                          ? 'Mean ± SD · $pairCount cặp đạt QA$qualitySummary'
+                          : '$pairCount cặp đạt QA · cần ít nhất 2 cặp để tính SD'
+                              '$qualitySummary',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -159,12 +178,16 @@ class _FsrRegionAnalysisState extends State<FsrRegionAnalysis> {
                 const SizedBox(height: 5),
                 Wrap(
                   spacing: 7,
+                  runSpacing: 5,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: List.generate(items.length, (index) {
                     const labels = ['GÓT', 'GIỮA BÀN CHÂN', 'TRƯỚC BÀN CHÂN'];
                     return ChoiceChip(
                       selected: index == _activeRegion,
-                      label: Text(labels[index],
-                          style: const TextStyle(fontSize: 9)),
+                      label: Text(
+                        labels[index],
+                        style: const TextStyle(fontSize: 9),
+                      ),
                       visualDensity: VisualDensity.compact,
                       onSelected: (_) => setState(() => _activeRegion = index),
                     );
@@ -207,6 +230,11 @@ class _RegionSeries {
       (value['steps'] as num?)?.toInt() ?? 0,
     );
   }
+
+  double get peak {
+    final values = mean.where((value) => value.isFinite && value >= 0).toList();
+    return values.isEmpty ? 0 : values.reduce(max);
+  }
 }
 
 class _RegionChartCard extends StatelessWidget {
@@ -228,6 +256,15 @@ class _RegionChartCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final left = _RegionSeries.from(region is Map ? region['left'] : null);
     final right = _RegionSeries.from(region is Map ? region['right'] : null);
+    final strongerPeak = max(left.peak, right.peak);
+    final hasBothSides = left.peak > 0 && right.peak > 0;
+    final rawSymmetry = !hasBothSides || strongerPeak <= 0
+        ? 0.0
+        : 100 * min(left.peak, right.peak) / strongerPeak;
+    final pairCount = left.steps > 0 && right.steps > 0
+        ? min(left.steps, right.steps)
+        : max(left.steps, right.steps);
+    final hasSd = left.steps >= 2 || right.steps >= 2;
     final hasData = left.mean.isNotEmpty || right.mean.isNotEmpty;
     return Container(
       decoration: BoxDecoration(
@@ -239,22 +276,63 @@ class _RegionChartCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          Center(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.15,
+              ),
+            ),
           ),
-          const SizedBox(height: 3),
-          Text(
-            'Mean \u00b1 SD \u00b7 0\u2013100% pha ch\u1ed1ng \u0111\u1ee1'
-            ' \u00b7 ${max(left.steps, right.steps)} c\u1eb7p',
-            style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
+          const SizedBox(height: 4),
+          Center(
+            child: Text(
+              '${hasSd ? 'Mean ± SD' : 'Mean'} · n=$pairCount cặp song phương · '
+              '${hasBothSides ? 'đối xứng đỉnh ${rawSymmetry.toStringAsFixed(1)}% · ' : ''}'
+              'đỉnh T ${left.peak.toStringAsFixed(1)} / '
+              'P ${right.peak.toStringAsFixed(1)} '
+              '${displayForceUnit(unit)}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 10,
+                color: AppColors.textSecondary,
+              ),
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(
+              spacing: 14,
+              runSpacing: 4,
+              alignment: WrapAlignment.end,
+              children: [
+                _ChartLegend(
+                  color: AppColors.leftLeg,
+                  label: '$leftLabel · Mean',
+                ),
+                _ChartLegend(
+                  color: _reportRightLine,
+                  label: '$rightLabel · Mean',
+                  dashed: true,
+                ),
+                if (hasSd) const _BandLegend(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 7),
           Expanded(
             child: hasData
-                ? _RegionLineChart(left: left, right: right, unit: unit)
+                ? _RegionLineChart(
+                    left: left,
+                    right: right,
+                    unit: unit,
+                  )
                 : const Center(
                     child: Text(
                       'Kh\u00f4ng \u0111\u1ee7 m\u1eabu FSR trong clip',
@@ -264,19 +342,6 @@ class _RegionChartCard extends StatelessWidget {
                       ),
                     ),
                   ),
-          ),
-          const SizedBox(height: 5),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _ChartLegend(color: AppColors.leftLeg, label: leftLabel),
-              const SizedBox(width: 16),
-              _ChartLegend(
-                color: AppColors.rightLeg,
-                label: rightLabel,
-                dashed: true,
-              ),
-            ],
           ),
         ],
       ),
@@ -305,11 +370,18 @@ class _RegionLineChart extends StatelessWidget {
     });
   }
 
-  LineChartBarData _bound(List<double> mean, List<double> sd, bool upper) {
+  LineChartBarData _bound(
+    List<double> mean,
+    List<double> sd,
+    bool upper,
+    Color color,
+  ) {
     return LineChartBarData(
       spots: _spots(mean, sd, upper),
-      color: Colors.transparent,
-      barWidth: 0,
+      color: color.withValues(alpha: 0.68),
+      barWidth: 1.0,
+      isCurved: false,
+      preventCurveOverShooting: true,
       dotData: const FlDotData(show: false),
     );
   }
@@ -319,60 +391,80 @@ class _RegionLineChart extends StatelessWidget {
     return LineChartBarData(
       spots: _spots(values),
       color: color,
-      barWidth: 2.2,
-      isCurved: true,
-      curveSmoothness: 0.22,
-      dashArray: dashed ? const [7, 5] : null,
+      barWidth: 2.4,
+      isCurved: false,
+      preventCurveOverShooting: true,
+      isStrokeCapRound: true,
+      isStrokeJoinRound: true,
+      dashArray: dashed ? const [8, 5] : null,
       dotData: const FlDotData(show: false),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bars = <LineChartBarData>[
-      _bound(left.mean, left.sd, false),
-      _bound(left.mean, left.sd, true),
-      _bound(right.mean, right.sd, false),
-      _bound(right.mean, right.sd, true),
-      _mean(left.mean, AppColors.leftLeg),
-      _mean(right.mean, AppColors.rightLeg, dashed: true),
-    ];
-    return LineChart(
+    final envelope = <double>[
+      for (final series in [left, right])
+        for (var index = 0; index < series.mean.length; index++)
+          series.mean[index] +
+              (series.steps >= 2 && index < series.sd.length
+                  ? series.sd[index].abs()
+                  : 0),
+    ].where((value) => value.isFinite && value >= 0).toList();
+    final peak = envelope.isEmpty ? 0.0 : envelope.reduce(max);
+    final maxY = unit == 'N_demo60'
+        ? 350.0
+        : max(10.0, (peak * 1.08 / 10).ceil() * 10.0);
+    final bars = <LineChartBarData>[];
+    final bands = <BetweenBarsData>[];
+    void addSeries(
+      _RegionSeries series,
+      Color color, {
+      bool dashed = false,
+    }) {
+      if (series.mean.isEmpty) return;
+      if (series.steps >= 2 && series.sd.length >= series.mean.length) {
+        final lowerIndex = bars.length;
+        bars
+          ..add(_bound(series.mean, series.sd, false, color))
+          ..add(_bound(series.mean, series.sd, true, color));
+        bands.add(BetweenBarsData(
+          fromIndex: lowerIndex,
+          toIndex: lowerIndex + 1,
+          color: color.withValues(alpha: 0.52),
+        ));
+      }
+      bars.add(_mean(series.mean, color, dashed: dashed));
+    }
+
+    addSeries(left, AppColors.leftLeg);
+    addSeries(right, _reportRightLine, dashed: true);
+    return SmoothedLineChart(
+      preserveValues: unit == 'N_demo60',
       LineChartData(
         minX: 0,
         maxX: 100,
         minY: 0,
+        maxY: maxY,
         lineBarsData: bars,
-        betweenBarsData: [
-          BetweenBarsData(
-            fromIndex: 0,
-            toIndex: 1,
-            color: AppColors.leftLeg.withValues(alpha: 0.14),
-          ),
-          BetweenBarsData(
-            fromIndex: 2,
-            toIndex: 3,
-            color: AppColors.rightLeg.withValues(alpha: 0.12),
-          ),
-        ],
+        betweenBarsData: bands,
         gridData: FlGridData(
           show: true,
           drawVerticalLine: true,
-          horizontalInterval: null,
+          horizontalInterval: max(1.0, maxY / 5),
+          verticalInterval: 20,
           getDrawingHorizontalLine: (_) => const FlLine(
-            color: AppColors.border,
-            strokeWidth: 0.7,
-            dashArray: [4, 4],
+            color: _reportGrid,
+            strokeWidth: 0.65,
           ),
           getDrawingVerticalLine: (_) => const FlLine(
-            color: AppColors.border,
-            strokeWidth: 0.7,
-            dashArray: [4, 4],
+            color: _reportGrid,
+            strokeWidth: 0.65,
           ),
         ),
         borderData: FlBorderData(
           show: true,
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: _reportFrame, width: 0.8),
         ),
         titlesData: FlTitlesData(
           topTitles:
@@ -381,37 +473,44 @@ class _RegionLineChart extends StatelessWidget {
               const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(
             axisNameWidget: const Text(
-              '% pha ch\u1ed1ng \u0111\u1ee1 chu\u1ea9n h\u00f3a',
-              style: TextStyle(fontSize: 8),
+              'Pha chống đỡ (%)',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
             ),
             sideTitles: SideTitles(
               showTitles: true,
               interval: 20,
-              reservedSize: 22,
+              reservedSize: 29,
               getTitlesWidget: (value, _) => Text(
                 value.toInt().toString(),
-                style: const TextStyle(fontSize: 8),
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textSecondary,
+                ),
               ),
             ),
           ),
           leftTitles: AxisTitles(
             axisNameWidget: Text(
-              unit == 'relative_load' ? 'Mức tải tương đối (đ.v.)' : unit,
-              style: const TextStyle(fontSize: 8),
+              'Lực (${displayForceUnit(unit)})',
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
             ),
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 42,
+              interval: max(1.0, maxY / 5),
+              reservedSize: 54,
               getTitlesWidget: (value, _) => Text(
                 value.toStringAsFixed(0),
-                style: const TextStyle(fontSize: 8),
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textSecondary,
+                ),
               ),
             ),
           ),
         ),
         lineTouchData: const LineTouchData(enabled: false),
       ),
-      duration: const Duration(milliseconds: 180),
+      duration: Duration.zero,
     );
   }
 }
@@ -445,7 +544,35 @@ class _ChartLegend extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 5),
-        Text(label, style: const TextStyle(fontSize: 9)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BandLegend extends StatelessWidget {
+  const _BandLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(color: Color(0x1F175CD3)),
+          child: SizedBox(width: 14, height: 8),
+        ),
+        SizedBox(width: 5),
+        Text(
+          'Dải mờ · ±1 SD',
+          style: TextStyle(fontSize: 10, color: AppColors.textPrimary),
+        ),
       ],
     );
   }

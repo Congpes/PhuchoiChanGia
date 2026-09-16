@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/localized_text.dart';
 import 'package:provider/provider.dart';
 
 import 'app_alert.dart';
@@ -359,10 +361,8 @@ class _ProstheticSelector extends StatelessWidget {
               border: OutlineInputBorder(),
             ),
             items: const [
-              DropdownMenuItem(
-                  value: LegSide.left, child: Text('Chân trái (giả)')),
-              DropdownMenuItem(
-                  value: LegSide.right, child: Text('Chân phải (giả)')),
+              DropdownMenuItem(value: LegSide.left, child: Text('Chân trái')),
+              DropdownMenuItem(value: LegSide.right, child: Text('Chân phải')),
             ],
             onChanged: (v) {},
           ),

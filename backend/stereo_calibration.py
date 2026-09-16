@@ -337,19 +337,46 @@ class StereoCalibrationManager:
             self._calibration = calibration
         return self.status(camera_indices)
 
-    def compatible(self, camera_indices: tuple[int, int] | None = None) -> bool:
+    def compatible(
+        self,
+        camera_indices: tuple[int, int] | None = None,
+        *,
+        image_size_0: tuple[int, int] | None = None,
+        image_size_1: tuple[int, int] | None = None,
+    ) -> bool:
         calibration = self._calibration
         if not calibration or not calibration.get("valid", False):
             return False
-        if camera_indices is None:
-            return True
-        return calibration.get("cameraIndices") == [int(camera_indices[0]), int(camera_indices[1])]
+        if camera_indices is not None and calibration.get("cameraIndices") != [
+            int(camera_indices[0]), int(camera_indices[1])
+        ]:
+            return False
+        calibrated_size = tuple(int(value) for value in calibration.get("imageSize", ()))
+        for live_size in (image_size_0, image_size_1):
+            if live_size is not None and tuple(map(int, live_size)) != calibrated_size:
+                return False
+        return True
 
-    def status(self, camera_indices: tuple[int, int] | None = None) -> dict[str, Any]:
+    def status(
+        self,
+        camera_indices: tuple[int, int] | None = None,
+        *,
+        image_size_0: tuple[int, int] | None = None,
+        image_size_1: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             sample_count = len(self._samples)
             calibration = dict(self._calibration) if self._calibration else None
-        compatible = self.compatible(camera_indices)
+        camera_compatible = self.compatible(camera_indices)
+        compatible = self.compatible(
+            camera_indices,
+            image_size_0=image_size_0,
+            image_size_1=image_size_1,
+        )
+        live_sizes_supplied = image_size_0 is not None or image_size_1 is not None
+        resolution_compatible = (
+            compatible if camera_compatible and live_sizes_supplied else None
+        )
         summary = None
         if calibration:
             summary = {
@@ -366,6 +393,17 @@ class StereoCalibrationManager:
             "readyToSolve": sample_count >= self.minimum_samples,
             "calibrated": calibration is not None,
             "compatible": compatible,
+            "cameraCompatible": camera_compatible,
+            "resolutionCompatible": resolution_compatible,
+            "needsRecalibration": bool(
+                calibration is not None
+                and camera_compatible
+                and resolution_compatible is False
+            ),
+            "liveImageSizes": {
+                "camera0": list(image_size_0) if image_size_0 is not None else None,
+                "camera1": list(image_size_1) if image_size_1 is not None else None,
+            },
             "calibration": summary,
         }
 

@@ -5,6 +5,9 @@ echo Dang khoi dong Python FastAPI Backend...
 set "SINGLE_CAMERA_MODE=false"
 set "CAMERA_FRONTAL_INDEX="
 set "CAMERA_SAGITTAL_INDEX="
+set "FSR_SERIAL_AUTO=true"
+set "FSR_SERIAL_RETRY_INITIAL_SECONDS=0.5"
+set "FSR_SERIAL_RETRY_MAX_SECONDS=5"
 echo Camera se duoc chon trong man Scan sau khi backend khoi dong.
 echo Neu co 2 webcam ngoai, hay chon 2 anh thu cua webcam ngoai.
 cd /d "%~dp0backend"

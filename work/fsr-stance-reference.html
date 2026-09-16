@@ -1,0 +1,480 @@
+<div id="fsr-stance-reference">
+  <style>
+    #fsr-stance-reference {
+      color: var(--foreground);
+      width: 100%;
+    }
+    #fsr-stance-reference .figure-heading {
+      margin: 0 0 4px;
+      font-weight: 500;
+    }
+    #fsr-stance-reference .figure-subtitle,
+    #fsr-stance-reference .figure-note {
+      color: var(--muted-foreground);
+      margin: 0;
+    }
+    #fsr-stance-reference .figure-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px 22px;
+      margin-top: 16px;
+    }
+    #fsr-stance-reference .plot-panel {
+      min-width: 0;
+    }
+    #fsr-stance-reference .plot-panel.total-panel {
+      grid-column: 1 / -1;
+    }
+    #fsr-stance-reference .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 2px;
+    }
+    #fsr-stance-reference .panel-heading h3 {
+      margin: 0;
+      font-weight: 500;
+    }
+    #fsr-stance-reference .legend {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    #fsr-stance-reference .legend button {
+      appearance: none;
+      background: transparent;
+      border: 0;
+      color: var(--foreground);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 0;
+    }
+    #fsr-stance-reference .legend button[aria-pressed="false"] {
+      color: var(--muted-foreground);
+      opacity: 0.55;
+    }
+    #fsr-stance-reference .legend-swatch {
+      width: 18px;
+      height: 3px;
+      background: var(--series-color);
+      display: inline-block;
+    }
+    #fsr-stance-reference .legend-swatch.dashed {
+      background: repeating-linear-gradient(
+        90deg,
+        var(--series-color) 0 6px,
+        transparent 6px 10px
+      );
+    }
+    #fsr-stance-reference .plot-host {
+      width: 100%;
+      min-height: 250px;
+    }
+    #fsr-stance-reference .plot-host svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }
+    #fsr-stance-reference .axis text,
+    #fsr-stance-reference .axis-title,
+    #fsr-stance-reference .phase-label,
+    #fsr-stance-reference .value-label {
+      fill: var(--foreground);
+      font-size: 12px;
+    }
+    #fsr-stance-reference .axis .domain,
+    #fsr-stance-reference .axis line,
+    #fsr-stance-reference .chart-frame {
+      stroke: var(--border);
+    }
+    #fsr-stance-reference .grid line {
+      stroke: var(--border);
+      stroke-opacity: 0.65;
+    }
+    #fsr-stance-reference .grid .domain {
+      display: none;
+    }
+    #fsr-stance-reference .phase-guide {
+      stroke: var(--muted-foreground);
+      stroke-opacity: 0.45;
+      stroke-dasharray: 4 5;
+    }
+    #fsr-stance-reference .hover-guide {
+      stroke: var(--foreground);
+      stroke-opacity: 0.5;
+      pointer-events: none;
+    }
+    #fsr-stance-reference .tooltip {
+      position: absolute;
+      z-index: 10;
+      pointer-events: none;
+      background: var(--popover);
+      color: var(--popover-foreground);
+      border: 1px solid var(--border);
+      padding: 7px 9px;
+      max-width: 230px;
+      display: none;
+    }
+    #fsr-stance-reference .tooltip-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      white-space: nowrap;
+    }
+    #fsr-stance-reference .figure-note {
+      margin-top: 12px;
+    }
+    @media (max-width: 700px) {
+      #fsr-stance-reference .figure-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      #fsr-stance-reference .plot-panel.total-panel {
+        grid-column: auto;
+      }
+      #fsr-stance-reference .legend {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+
+  <h2 class="figure-heading">Mẫu tham chiếu lực FSR trong pha chống đỡ</h2>
+  <p class="figure-subtitle text-small">Người 60 kg · hai chân lành · pha chống đỡ chuẩn hóa 0–100%</p>
+
+  <div class="figure-grid">
+    <section class="plot-panel total-panel" data-panel="total">
+      <div class="panel-heading">
+        <h3>Tổng lực từng chân</h3>
+        <div class="legend" aria-label="Chú giải tổng lực"></div>
+      </div>
+      <div class="plot-host"></div>
+    </section>
+
+    <section class="plot-panel" data-panel="left">
+      <div class="panel-heading">
+        <h3>Chân trái</h3>
+        <div class="legend" aria-label="Chú giải chân trái"></div>
+      </div>
+      <div class="plot-host"></div>
+    </section>
+
+    <section class="plot-panel" data-panel="right">
+      <div class="panel-heading">
+        <h3>Chân phải</h3>
+        <div class="legend" aria-label="Chú giải chân phải"></div>
+      </div>
+      <div class="plot-host"></div>
+    </section>
+  </div>
+
+  <p class="figure-note text-small">Hai đỉnh tổng lực nằm ở tiếp nhận tải và đẩy chân; ba đường vùng cộng lại đúng bằng tổng lực. Dải màu biểu diễn ±SD mẫu.</p>
+  <p class="sr-only">Tổng lực mỗi chân tăng từ 0 lên khoảng 610 newton ở đầu pha chống, giảm xuống khoảng 510 newton ở giữa pha, tăng lại khoảng 630 newton khi đẩy chân và trở về 0 khi rời đất. Lực gót đạt đỉnh sớm, lực giữa bàn chân đạt đỉnh ở giữa pha và lực trước bàn chân đạt đỉnh muộn.</p>
+  <div class="tooltip" role="tooltip" aria-hidden="true"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script>
+    (() => {
+      const root = document.getElementById('fsr-stance-reference');
+      const tooltip = root.querySelector('.tooltip');
+      const phase = d3.range(0, 101);
+
+      const colors = {
+        left: 'var(--viz-series-1)',
+        right: 'var(--viz-series-2)',
+        heel: 'var(--viz-series-1)',
+        midfoot: 'var(--viz-series-3)',
+        forefoot: 'var(--viz-series-2)'
+      };
+
+      const gaussian = (x, center, width) =>
+        Math.exp(-0.5 * Math.pow((x - center) / width, 2));
+
+      const contactEnvelope = x => {
+        if (x <= 0 || x >= 100) return 0;
+        return (1 - Math.exp(-x / 5)) * (1 - Math.exp(-(100 - x) / 5));
+      };
+
+      function sampleAt(x, side) {
+        const isLeft = side === 'left';
+        const shifted = Math.max(0, Math.min(100, x + (isLeft ? 0.6 : 0)));
+        const scale = isLeft ? 0.98 : 1;
+        const total = scale * contactEnvelope(x) * (
+          510 +
+          125 * gaussian(shifted, 18, 12) +
+          130 * gaussian(shifted, 80, 12)
+        );
+
+        const heelWeight = 0.08 + 1.8 * gaussian(shifted, 14, 22);
+        const midWeight = 0.10 + 1.0 * gaussian(shifted, 50, 22);
+        const foreWeight = 0.08 + 2.3 * gaussian(shifted, 82, 15);
+        const weightSum = heelWeight + midWeight + foreWeight;
+        const heel = total * heelWeight / weightSum;
+        const midfoot = total * midWeight / weightSum;
+        const forefoot = total * foreWeight / weightSum;
+        const spreadFactor = 0.045 + 0.008 * (1 + Math.sin((x + (isLeft ? 7 : 19)) / 13)) / 2;
+
+        return {
+          phase: x,
+          total,
+          heel,
+          midfoot,
+          forefoot,
+          heelSd: heel * spreadFactor,
+          midfootSd: midfoot * spreadFactor,
+          forefootSd: forefoot * spreadFactor
+        };
+      }
+
+      const sideData = {
+        left: phase.map(x => sampleAt(x, 'left')),
+        right: phase.map(x => sampleAt(x, 'right'))
+      };
+
+      const panelConfig = {
+        total: {
+          series: [
+            { key: 'left', label: 'Chân trái', color: colors.left, dash: null, values: sideData.left.map(d => ({ phase: d.phase, value: d.total })) },
+            { key: 'right', label: 'Chân phải', color: colors.right, dash: '8 5', values: sideData.right.map(d => ({ phase: d.phase, value: d.total })) }
+          ],
+          phases: [
+            { x: 18, label: 'Đỉnh tiếp nhận tải' },
+            { x: 50, label: 'Lõm giữa thì trụ' },
+            { x: 80, label: 'Đỉnh đẩy chân' }
+          ]
+        },
+        left: {
+          series: regionSeries('left'),
+          phases: [
+            { x: 15, label: 'Gót' },
+            { x: 50, label: 'Giữa' },
+            { x: 80, label: 'Trước' }
+          ]
+        },
+        right: {
+          series: regionSeries('right'),
+          phases: [
+            { x: 15, label: 'Gót' },
+            { x: 50, label: 'Giữa' },
+            { x: 80, label: 'Trước' }
+          ]
+        }
+      };
+
+      function regionSeries(side) {
+        return [
+          { key: 'heel', label: 'Gót', color: colors.heel, values: sideData[side].map(d => ({ phase: d.phase, value: d.heel, sd: d.heelSd })) },
+          { key: 'midfoot', label: 'Giữa', color: colors.midfoot, values: sideData[side].map(d => ({ phase: d.phase, value: d.midfoot, sd: d.midfootSd })) },
+          { key: 'forefoot', label: 'Trước', color: colors.forefoot, values: sideData[side].map(d => ({ phase: d.phase, value: d.forefoot, sd: d.forefootSd })) }
+        ];
+      }
+
+      function buildLegend(panel, config, redraw) {
+        const legend = panel.querySelector('.legend');
+        legend.innerHTML = '';
+        config.series.forEach(series => {
+          series.visible = true;
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.setAttribute('aria-pressed', 'true');
+          button.setAttribute('aria-label', `Hiện hoặc ẩn ${series.label}`);
+          const swatch = document.createElement('span');
+          swatch.className = `legend-swatch${series.dash ? ' dashed' : ''}`;
+          swatch.style.setProperty('--series-color', series.color);
+          const label = document.createElement('span');
+          label.textContent = series.label;
+          button.append(swatch, label);
+          button.addEventListener('click', () => {
+            series.visible = !series.visible;
+            button.setAttribute('aria-pressed', String(series.visible));
+            redraw();
+          });
+          legend.appendChild(button);
+        });
+      }
+
+      function drawPanel(panel, config) {
+        const host = panel.querySelector('.plot-host');
+        const width = Math.max(320, Math.floor(host.getBoundingClientRect().width));
+        const compact = width < 520;
+        const height = panel.dataset.panel === 'total' ? 290 : 270;
+        const margin = { top: 30, right: 18, bottom: 52, left: 66 };
+        const innerWidth = width - margin.left - margin.right;
+        const innerHeight = height - margin.top - margin.bottom;
+        host.innerHTML = '';
+
+        const allUpper = config.series.flatMap(s => s.values.map(d => d.value + (d.sd || 0)));
+        const maxValue = d3.max(allUpper) || 1;
+        const yCeiling = Math.ceil(maxValue * 1.02 / 50) * 50;
+        const x = d3.scaleLinear().domain([0, 100]).range([0, innerWidth]);
+        const y = d3.scaleLinear().domain([0, yCeiling]).nice().range([innerHeight, 0]);
+
+        const svg = d3.select(host)
+          .append('svg')
+          .attr('viewBox', `0 0 ${width} ${height}`)
+          .attr('role', 'img')
+          .attr('aria-label', panel.dataset.panel === 'total'
+            ? 'Tổng lực hai chân với hai đỉnh và một lõm giữa pha chống đỡ'
+            : `Lực vùng ${panel.dataset.panel === 'left' ? 'chân trái' : 'chân phải'} chuyển từ gót sang giữa rồi trước bàn chân`);
+
+        svg.append('title').text(panel.querySelector('h3').textContent);
+        const plot = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+        plot.append('g')
+          .attr('class', 'grid')
+          .call(d3.axisLeft(y).ticks(6).tickSize(-innerWidth).tickFormat(''));
+
+        plot.append('rect')
+          .attr('class', 'chart-frame')
+          .attr('data-chart-frame', '')
+          .attr('width', innerWidth)
+          .attr('height', innerHeight)
+          .attr('fill', 'none');
+
+        const phaseGroup = plot.append('g');
+        config.phases.forEach(item => {
+          phaseGroup.append('line')
+            .attr('class', 'phase-guide')
+            .attr('x1', x(item.x))
+            .attr('x2', x(item.x))
+            .attr('y1', 0)
+            .attr('y2', innerHeight);
+          if (!compact || panel.dataset.panel !== 'total') {
+            phaseGroup.append('text')
+              .attr('class', 'phase-label')
+              .attr('x', x(item.x))
+              .attr('y', -9)
+              .attr('text-anchor', item.x < 25 ? 'start' : item.x > 75 ? 'end' : 'middle')
+              .text(item.label);
+          }
+        });
+
+        const area = d3.area()
+          .x(d => x(d.phase))
+          .y0(d => y(Math.max(0, d.value - d.sd)))
+          .y1(d => y(d.value + d.sd))
+          .curve(d3.curveMonotoneX);
+        const line = d3.line()
+          .x(d => x(d.phase))
+          .y(d => y(d.value))
+          .curve(d3.curveMonotoneX);
+
+        config.series.filter(s => s.visible).forEach(series => {
+          if (series.values.some(d => d.sd)) {
+            plot.append('path')
+              .datum(series.values)
+              .attr('data-series', series.key)
+              .attr('d', area)
+              .attr('fill', series.color)
+              .attr('fill-opacity', 0.13)
+              .attr('stroke', 'none');
+          }
+          plot.append('path')
+            .datum(series.values)
+            .attr('data-series', series.key)
+            .attr('d', line)
+            .attr('fill', 'none')
+            .attr('stroke', series.color)
+            .attr('stroke-width', 2.6)
+            .attr('stroke-dasharray', series.dash || null);
+        });
+
+        const xTicks = compact ? [0, 25, 50, 75, 100] : [0, 20, 40, 60, 80, 100];
+        plot.append('g')
+          .attr('class', 'axis')
+          .attr('transform', `translate(0,${innerHeight})`)
+          .call(d3.axisBottom(x).tickValues(xTicks));
+        plot.append('g')
+          .attr('class', 'axis')
+          .call(d3.axisLeft(y).ticks(6));
+
+        svg.append('text')
+          .attr('class', 'axis-title')
+          .attr('data-axis', 'x')
+          .attr('x', margin.left + innerWidth / 2)
+          .attr('y', height - 9)
+          .attr('text-anchor', 'middle')
+          .text('Pha chống đỡ (%)');
+        svg.append('text')
+          .attr('class', 'axis-title')
+          .attr('data-axis', 'y')
+          .attr('transform', `translate(18,${margin.top + innerHeight / 2}) rotate(-90)`)
+          .attr('text-anchor', 'middle')
+          .text('Lực (N)');
+
+        const hoverLayer = plot.append('g').style('display', 'none');
+        const hoverGuide = hoverLayer.append('line')
+          .attr('class', 'hover-guide')
+          .attr('data-chart-hover-guide', '')
+          .attr('y1', 0)
+          .attr('y2', innerHeight);
+        const markerLayer = hoverLayer.append('g');
+
+        plot.append('rect')
+          .attr('data-chart-hit', '')
+          .attr('data-chart-hover-overlay', 'cross-series')
+          .attr('width', innerWidth)
+          .attr('height', innerHeight)
+          .attr('fill', 'transparent')
+          .style('cursor', 'crosshair')
+          .on('pointerenter', () => {
+            hoverLayer.style('display', null);
+            tooltip.style.display = 'block';
+            tooltip.setAttribute('aria-hidden', 'false');
+          })
+          .on('pointerleave', () => {
+            hoverLayer.style('display', 'none');
+            tooltip.style.display = 'none';
+            tooltip.setAttribute('aria-hidden', 'true');
+          })
+          .on('pointermove', event => {
+            const [mx] = d3.pointer(event);
+            const phaseValue = Math.max(0, Math.min(100, x.invert(mx)));
+            hoverGuide.attr('x1', x(phaseValue)).attr('x2', x(phaseValue));
+            markerLayer.selectAll('*').remove();
+            const rows = [];
+            config.series.filter(s => s.visible).forEach(series => {
+              const i = d3.bisector(d => d.phase).center(series.values, phaseValue);
+              const value = series.values[i].value;
+              markerLayer.append('circle')
+                .attr('data-chart-hover-marker', '')
+                .attr('cx', x(phaseValue))
+                .attr('cy', y(value))
+                .attr('r', 4)
+                .attr('fill', series.color)
+                .attr('stroke', 'var(--background)')
+                .attr('stroke-width', 1.5);
+              rows.push(`<div class="tooltip-row"><span>${series.label}</span><strong>${value.toFixed(0)} N</strong></div>`);
+            });
+            tooltip.innerHTML = `<div><strong>${phaseValue.toFixed(0)}% pha chống đỡ</strong></div>${rows.join('')}`;
+            const rootRect = root.getBoundingClientRect();
+            const hostRect = host.getBoundingClientRect();
+            const left = Math.min(rootRect.width - 238, Math.max(4, hostRect.left - rootRect.left + margin.left + x(phaseValue) + 12));
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${hostRect.top - rootRect.top + margin.top + 8}px`;
+          });
+      }
+
+      root.querySelectorAll('.plot-panel').forEach(panel => {
+        const config = panelConfig[panel.dataset.panel];
+        let scheduled = false;
+        const redraw = () => {
+          if (scheduled) return;
+          scheduled = true;
+          requestAnimationFrame(() => {
+            scheduled = false;
+            drawPanel(panel, config);
+          });
+        };
+        buildLegend(panel, config, redraw);
+        redraw();
+        new ResizeObserver(redraw).observe(panel.querySelector('.plot-host'));
+      });
+    })();
+  </script>
+</div>

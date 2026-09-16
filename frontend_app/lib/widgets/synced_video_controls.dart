@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 
 import '../theme/app_theme.dart';
 import 'video_stream.dart';
@@ -39,20 +42,23 @@ class SyncedVideoControls extends StatelessWidget {
           child: Row(
             children: [
               _button(
+                context,
                 icon: Icons.replay_5,
-                tooltip: 'L?i 5 gi?y',
+                tooltip: 'Lùi 5 giây',
                 onPressed:
                     controller.isReady ? () => controller.skip(-5) : null,
               ),
               _button(
+                context,
                 icon: controller.isPlaying ? Icons.pause : Icons.play_arrow,
-                tooltip: controller.isPlaying ? 'T?m d?ng' : 'Ph?t',
+                tooltip: controller.isPlaying ? 'Tạm dừng' : 'Phát',
                 onPressed: controller.toggle,
                 emphasized: true,
               ),
               _button(
+                context,
                 icon: Icons.forward_5,
-                tooltip: 'Ti?n 5 gi?y',
+                tooltip: 'Tiến 5 giây',
                 onPressed: controller.isReady ? () => controller.skip(5) : null,
               ),
               SizedBox(
@@ -103,7 +109,8 @@ class SyncedVideoControls extends StatelessWidget {
     );
   }
 
-  static Widget _button({
+  static Widget _button(
+    BuildContext context, {
     required IconData icon,
     required String tooltip,
     required VoidCallback? onPressed,
@@ -112,7 +119,7 @@ class SyncedVideoControls extends StatelessWidget {
     return IconButton(
       onPressed: onPressed,
       icon: Icon(icon, size: emphasized ? 22 : 18),
-      tooltip: tooltip,
+      tooltip: context.tr(tooltip),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints.tightFor(width: 32, height: 32),
       visualDensity: VisualDensity.compact,

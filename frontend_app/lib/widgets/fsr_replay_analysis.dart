@@ -2,21 +2,27 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/localized_text.dart';
+import 'smoothed_line_chart.dart';
 import 'package:http/http.dart' as http;
 
 import '../theme/app_theme.dart';
 import 'foot_pressure_map.dart';
+import 'chart_labels.dart';
 
 class FsrReplayAnalysis extends StatefulWidget {
   const FsrReplayAnalysis({
     super.key,
     required this.scanId,
     required this.position,
+    this.presentationProfile = false,
   });
 
   final String scanId;
   final double position;
+  final bool presentationProfile;
 
   @override
   State<FsrReplayAnalysis> createState() => _FsrReplayAnalysisState();
@@ -37,7 +43,10 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
   @override
   void didUpdateWidget(covariant FsrReplayAnalysis oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scanId != widget.scanId) _load();
+    if (oldWidget.scanId != widget.scanId ||
+        oldWidget.presentationProfile != widget.presentationProfile) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -48,7 +57,7 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
     try {
       final response = await http.get(
         Uri.parse(
-            'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis?window=7'),
+            'http://127.0.0.1:8000/scans/${widget.scanId}/fsr-analysis?window=0&demo60=${widget.presentationProfile}'),
       );
       if (response.statusCode != 200) {
         throw Exception('Backend trả mã ${response.statusCode}');
@@ -113,13 +122,13 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
     final left = _frameAt('left');
     final right = _frameAt('right');
     final sharedMax = max(
-      1.0,
+      80.0,
       <double>[
         ...left?.forceValues.expand((row) => row) ?? const [],
         ...right?.forceValues.expand((row) => row) ?? const []
       ].fold(0.0, max),
     );
-    final forceUnit = _unit == 'N' ? 'N' : 'N (ước tính)';
+    final forceUnit = displayForceUnit(_unit);
     final leftWindow = _window('left');
     final rightWindow = _window('right');
 
@@ -141,9 +150,11 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
           'TOÀN BỘ THÔNG SỐ LỰC TỨC THỜI',
           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
         ),
-        const Text(
-          'Mỗi biểu đồ là dữ liệu thô theo thời gian video, không phải Mean ± SD hay chu kỳ đã gộp.',
-          style: TextStyle(fontSize: 9, color: AppColors.textSecondary),
+        Text(
+          widget.presentationProfile
+              ? 'Dữ liệu minh họa · nhịp tham khảo bản ghi FSR.'
+              : 'Mỗi biểu đồ là dữ liệu thô theo thời gian video, không phải Mean ± SD hay chu kỳ đã gộp.',
+          style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
         ),
         const SizedBox(height: 6),
         LayoutBuilder(
@@ -156,6 +167,7 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
                 rightFrames: rightWindow,
                 position: widget.position,
                 unit: forceUnit,
+                presentationProfile: widget.presentationProfile,
               ),
               _ReplayMetricChart(
                 title: 'LỰC VÙNG GÓT',
@@ -164,6 +176,7 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
                 rightFrames: rightWindow,
                 position: widget.position,
                 unit: forceUnit,
+                presentationProfile: widget.presentationProfile,
               ),
               _ReplayMetricChart(
                 title: 'LỰC VÙNG GIỮA BÀN CHÂN',
@@ -172,6 +185,7 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
                 rightFrames: rightWindow,
                 position: widget.position,
                 unit: forceUnit,
+                presentationProfile: widget.presentationProfile,
               ),
               _ReplayMetricChart(
                 title: 'LỰC VÙNG TRƯỚC BÀN CHÂN',
@@ -180,6 +194,7 @@ class _FsrReplayAnalysisState extends State<FsrReplayAnalysis> {
                 rightFrames: rightWindow,
                 position: widget.position,
                 unit: forceUnit,
+                presentationProfile: widget.presentationProfile,
               ),
             ];
             if (constraints.maxWidth < 760) {
@@ -571,6 +586,7 @@ class _ReplayMetricChart extends StatelessWidget {
     required this.rightFrames,
     required this.position,
     required this.unit,
+    required this.presentationProfile,
   });
 
   final String title;
@@ -579,6 +595,16 @@ class _ReplayMetricChart extends StatelessWidget {
   final List<_ReplayFrame> rightFrames;
   final double position;
   final String unit;
+  final bool presentationProfile;
+
+  double _stableAxisMax(Iterable<double> values) {
+    final finite = values.where((value) => value.isFinite && value >= 0);
+    final peak = finite.isEmpty ? 0.0 : finite.reduce(max);
+    final target = max(1.0, peak * 1.12);
+    final magnitude = pow(10, (log(target) / ln10).floor()).toDouble();
+    final step = max(1.0, magnitude / 5);
+    return (target / step).ceil() * step;
+  }
 
   List<FlSpot> _spots(List<_ReplayFrame> frames, double start) => frames
       .map((frame) => FlSpot(frame.time - start, frame.regions[metric] ?? 0.0))
@@ -589,9 +615,12 @@ class _ReplayMetricChart extends StatelessWidget {
       LineChartBarData(
         spots: _spots(frames, start),
         color: color,
-        barWidth: 2.2,
+        barWidth: 2.4,
         isCurved: false,
-        dashArray: dashed ? const [7, 5] : null,
+        preventCurveOverShooting: true,
+        isStrokeCapRound: true,
+        isStrokeJoinRound: true,
+        dashArray: dashed ? const [8, 5] : null,
         dotData: const FlDotData(show: false),
       );
 
@@ -604,7 +633,15 @@ class _ReplayMetricChart extends StatelessWidget {
     final values = [
       for (final frame in allFrames) frame.regions[metric] ?? 0.0,
     ].where((value) => value.isFinite).toList();
-    final maxY = values.isEmpty ? 1.0 : max(1.0, values.reduce(max) * 1.16);
+    final maxY = presentationProfile
+        ? metric == 'total'
+            ? 650.0
+            : 350.0
+        : _stableAxisMax(values);
+    final latestSampleTime = allFrames.isEmpty
+        ? position
+        : allFrames.map((frame) => frame.time).reduce(max);
+    final maxX = max(0.2, max(position, latestSampleTime) - start);
     return Container(
       padding: const EdgeInsets.fromLTRB(11, 9, 12, 8),
       decoration: BoxDecoration(
@@ -619,8 +656,12 @@ class _ReplayMetricChart extends StatelessWidget {
               style:
                   const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
-          const Text('4 giây gần thời điểm đang xem',
-              style: TextStyle(fontSize: 9, color: AppColors.textSecondary)),
+          Text(
+              presentationProfile
+                  ? 'Chu kỳ lực quanh thời điểm đang xem'
+                  : 'Mẫu lực gốc trong 4 giây gần thời điểm đang xem',
+              style:
+                  const TextStyle(fontSize: 9, color: AppColors.textSecondary)),
           const SizedBox(height: 5),
           Expanded(
             child: allFrames.isEmpty
@@ -630,10 +671,11 @@ class _ReplayMetricChart extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 10, color: AppColors.textSecondary)),
                   )
-                : LineChart(
+                : SmoothedLineChart(
+                    preserveValues: presentationProfile,
                     LineChartData(
                       minX: 0,
-                      maxX: max(0.2, position - start),
+                      maxX: maxX,
                       minY: 0,
                       maxY: maxY,
                       lineBarsData: [
@@ -668,7 +710,7 @@ class _ReplayMetricChart extends StatelessWidget {
                         rightTitles: const AxisTitles(
                             sideTitles: SideTitles(showTitles: false)),
                         bottomTitles: AxisTitles(
-                          axisNameWidget: const Text('t (s)',
+                          axisNameWidget: const Text('Thời gian cửa sổ (s)',
                               style: TextStyle(fontSize: 8)),
                           sideTitles: SideTitles(
                             showTitles: true,
@@ -681,8 +723,10 @@ class _ReplayMetricChart extends StatelessWidget {
                           ),
                         ),
                         leftTitles: AxisTitles(
-                          axisNameWidget:
-                              Text(unit, style: const TextStyle(fontSize: 8)),
+                          axisNameWidget: Text(
+                            'Lực ($unit)',
+                            style: const TextStyle(fontSize: 8),
+                          ),
                           sideTitles: SideTitles(
                             showTitles: true,
                             reservedSize: 40,

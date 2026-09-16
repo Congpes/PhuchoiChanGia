@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
@@ -11,6 +14,7 @@ import '../models/gait_data.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import 'app_alert.dart';
+import 'pose_replay_overlay.dart';
 import 'realtime_chart_workspace.dart';
 
 import 'recording_timeline.dart';
@@ -24,6 +28,8 @@ class _SavedRecording {
     required this.frontalUrl,
     required this.sagittalUrl,
     required this.available,
+    required this.isReference,
+    required this.referenceStatus,
   });
 
   final String id;
@@ -32,6 +38,8 @@ class _SavedRecording {
   final String frontalUrl;
   final String sagittalUrl;
   final bool available;
+  final bool isReference;
+  final String referenceStatus;
 
   String get shortId => id.length <= 10 ? id : id.substring(id.length - 8);
 
@@ -44,6 +52,8 @@ class _SavedRecording {
       sagittalUrl: json['sagittalVideoUrl']?.toString() ?? '',
       available: json['available']?['frontal'] == true &&
           json['available']?['sagittal'] == true,
+      isReference: json['isReference'] == true,
+      referenceStatus: json['referenceStatus']?.toString() ?? 'none',
     );
   }
 }
@@ -68,6 +78,19 @@ class TabScan extends StatefulWidget {
 }
 
 class _TabScanState extends State<TabScan> {
+  static const String _referenceSessionId = 's-6c4a45bfdc';
+  static const String _referenceArchiveId = 'rec-44479af3887d';
+  static const String _referenceScanId = 'clip-333d9448';
+  static const String _referenceFsrScanId = 'clip-fd7a8f16';
+  static const String _referenceFrontalVideoId =
+      'be022810070947c191c2c44b50d5b6bc';
+  static const String _referenceSagittalVideoId =
+      '40242095de404c138e4544a00d7377d8';
+  static const double _referenceDurationSec = 38.1437304019928;
+  static const double _referencePlaybackRate = 0.8;
+  static const int _referenceAnalysisRevision = 5;
+
+  final int _cameraStreamSession = DateTime.now().microsecondsSinceEpoch;
   bool _sidebarOpen = false;
   bool _chartsExpanded = true;
   bool? _camera0Connected;
@@ -76,18 +99,25 @@ class _TabScanState extends State<TabScan> {
   bool? _camera1PoseDetected;
   bool? _camerasSynchronized;
   double? _cameraSyncErrorMs;
+  Map<String, dynamic>? _lateralTrunkFeedback;
   bool _singleCameraMode = false;
   bool _stereoCalibrationCompatible = false;
   bool _camerasSwapped = false;
   bool _swappingCameras = false;
   bool _cameraStatusLoaded = false;
+  int _cameraStatusFailures = 0;
   bool _cameraConfigured = false;
   bool _configuringCameras = false;
   bool _setupPromptShown = false;
   int? _frontalCameraIndex;
   int? _sagittalCameraIndex;
 
-  bool _useDemoVideos = false;
+  bool _useReferenceReplay = false;
+  final ValueNotifier<double> _referenceReplayPosition = ValueNotifier(0);
+  Timer? _referenceReplayTimer;
+  DateTime? _referenceReplayEpoch;
+  int _referenceReplayGeneration = 0;
+  int _handledReferenceReplayRequest = 0;
   final List<_SavedRecording> _savedRecordings = [];
   String? _selectedRecordingId;
   String? _recordingsSessionId;
@@ -118,17 +148,71 @@ class _TabScanState extends State<TabScan> {
   @override
   void dispose() {
     _cameraTimer?.cancel();
+    _referenceReplayTimer?.cancel();
+    _referenceReplayPosition.dispose();
     super.dispose();
+  }
+
+  void _selectVideoSource(String value) {
+    if (!mounted) return;
+    final useReference = value == 'reference';
+    _referenceReplayTimer?.cancel();
+    _referenceReplayTimer = null;
+    _referenceReplayEpoch = null;
+
+    setState(() {
+      _useReferenceReplay = useReference;
+      _selectedRecordingId =
+          value.startsWith('saved:') ? value.substring(6) : null;
+      if (useReference) {
+        _referenceReplayGeneration += 1;
+        // Always keep the archived, real FSR sample visible beside the two
+        // reference cameras. The label states that it is not time-synced to
+        // this camera recording.
+        _selectedCharts.add(RealtimeChartType.pressure);
+      }
+    });
+
+    if (!useReference) {
+      _referenceReplayPosition.value = 0;
+      return;
+    }
+    _referenceReplayPosition.value = 0;
+    _referenceReplayEpoch = DateTime.now();
+    _referenceReplayTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) {
+        final epoch = _referenceReplayEpoch;
+        if (epoch == null) return;
+        final elapsed = DateTime.now().difference(epoch).inMilliseconds / 1000;
+        _referenceReplayPosition.value =
+            (elapsed * _referencePlaybackRate) % _referenceDurationSec;
+      },
+    );
+  }
+
+  String _referenceVideoUrl(String videoId, String poseView) {
+    return 'http://127.0.0.1:8000/session-video/'
+        '$_referenceSessionId/$videoId'
+        '?start=0&end=${_referenceDurationSec.toStringAsFixed(4)}'
+        '&loop=true&rate=$_referencePlaybackRate'
+        '&pose_scan_id=$_referenceScanId'
+        '&pose_view=$poseView'
+        '&pose_revision=$_referenceAnalysisRevision'
+        '&joint_angles=${poseView == 'sagittal'}'
+        '&trunk_angle=true'
+        '&v=$_referenceReplayGeneration';
   }
 
   Future<void> _pollCameraStatus() async {
     try {
       final response = await http
           .get(Uri.parse('http://127.0.0.1:8000/camera-status'))
-          .timeout(const Duration(milliseconds: 900));
+          .timeout(const Duration(milliseconds: 1800));
       if (response.statusCode != 200 || !mounted) return;
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       setState(() {
+        _cameraStatusFailures = 0;
         _camera0Connected = body['camera0']?['connected'] == true;
         _camera1Connected = body['camera1']?['connected'] == true;
         _camera0PoseDetected = body['camera0']?['poseDetected'] == true;
@@ -157,8 +241,13 @@ class _TabScanState extends State<TabScan> {
             stereoCalibration is Map && stereoCalibration['compatible'] == true;
         _cameraStatusLoaded = true;
       });
+      unawaited(_pollLateralTrunkFeedback());
     } catch (_) {
-      if (mounted) {
+      _cameraStatusFailures += 1;
+      // A busy dual-camera inference frame can delay one lightweight status
+      // request. Do not flash both cameras as disconnected unless several
+      // consecutive polls fail.
+      if (mounted && _cameraStatusFailures >= 3) {
         setState(() {
           _camera0Connected = false;
           _camera1Connected = false;
@@ -167,8 +256,32 @@ class _TabScanState extends State<TabScan> {
           _camerasSynchronized = false;
           _cameraSyncErrorMs = null;
           _stereoCalibrationCompatible = false;
+          _lateralTrunkFeedback = null;
         });
       }
+    }
+  }
+
+  Future<void> _pollLateralTrunkFeedback() async {
+    if (_singleCameraMode || _usingPlaybackSource) {
+      if (mounted && _lateralTrunkFeedback != null) {
+        setState(() => _lateralTrunkFeedback = null);
+      }
+      return;
+    }
+    try {
+      final response = await http
+          .get(Uri.parse('http://127.0.0.1:8000/gait/steps?window=5'))
+          .timeout(const Duration(milliseconds: 1200));
+      if (response.statusCode != 200 || !mounted) return;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final feedback = body['lateralTrunkFeedback'];
+      setState(() {
+        _lateralTrunkFeedback =
+            feedback is Map ? Map<String, dynamic>.from(feedback) : null;
+      });
+    } catch (_) {
+      // A brief backend interruption must not cover the camera preview.
     }
   }
 
@@ -177,8 +290,8 @@ class _TabScanState extends State<TabScan> {
     setState(() => _configuringCameras = true);
     try {
       final response = await http
-          .get(Uri.parse('http://127.0.0.1:8000/camera/devices'))
-          .timeout(const Duration(seconds: 5));
+          .get(Uri.parse('http://127.0.0.1:8000/camera/devices?refresh=true'))
+          .timeout(const Duration(seconds: 30));
       if (response.statusCode != 200) {
         _message('Không thể dò camera: ${response.body}', error: true);
         return;
@@ -199,23 +312,38 @@ class _TabScanState extends State<TabScan> {
 
       final availableIndexes =
           devices.map((device) => (device['index'] as num).toInt()).toList();
+      final preferredPair = availableIndexes.length >= 3
+          ? availableIndexes.sublist(availableIndexes.length - 2)
+          : List<int>.from(availableIndexes);
       if (!mounted) return;
       final selection = await showDialog<_CameraSetupSelection>(
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) {
-          var frontalIndex = availableIndexes.contains(_frontalCameraIndex)
-              ? _frontalCameraIndex!
-              : (availableIndexes.length >= 3
-                  ? availableIndexes[availableIndexes.length - 2]
-                  : availableIndexes.first);
-          var sagittalIndex = availableIndexes.contains(_sagittalCameraIndex)
-              ? _sagittalCameraIndex!
-              : (availableIndexes.length >= 3
-                  ? availableIndexes.last
-                  : availableIndexes.length > 1
-                      ? availableIndexes[1]
-                      : availableIndexes.first);
+          final rememberedFrontal =
+              availableIndexes.contains(_frontalCameraIndex)
+                  ? _frontalCameraIndex
+                  : null;
+          final rememberedSagittal =
+              availableIndexes.contains(_sagittalCameraIndex)
+                  ? _sagittalCameraIndex
+                  : null;
+          final rememberedUsesPreferredPair = preferredPair.length >= 2 &&
+              rememberedFrontal != null &&
+              rememberedSagittal != null &&
+              preferredPair.contains(rememberedFrontal) &&
+              preferredPair.contains(rememberedSagittal);
+          var frontalIndex =
+              availableIndexes.length >= 3 && !rememberedUsesPreferredPair
+                  ? preferredPair.first
+                  : rememberedFrontal ?? preferredPair.first;
+          var sagittalIndex =
+              availableIndexes.length >= 3 && !rememberedUsesPreferredPair
+                  ? preferredPair.last
+                  : rememberedSagittal ??
+                      (preferredPair.length > 1
+                          ? preferredPair.last
+                          : preferredPair.first);
           var singleCameraMode = false;
 
           String labelFor(int index) {
@@ -269,9 +397,11 @@ class _TabScanState extends State<TabScan> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Chọn vai trò theo ảnh thử, không dựa vào vị trí cắm USB. Camera mặt phẳng dọc cần thấy liên tục vai–hông–gối–cổ chân.',
-                      style: TextStyle(
+                    Text(
+                      availableIndexes.length >= 3
+                          ? 'Ứng dụng đề xuất hai camera ngoài theo thứ tự Windows; webcam laptop chỉ dự phòng. Cổng có thể đổi nên hãy xác nhận bằng ảnh thử.'
+                          : 'Chọn vai trò theo ảnh thử, không dựa vào vị trí cắm USB. Camera mặt phẳng dọc cần thấy liên tục vai–hông–gối–cổ chân.',
+                      style: const TextStyle(
                           fontSize: 11, color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 12),
@@ -282,7 +412,7 @@ class _TabScanState extends State<TabScan> {
                         labelText: 'Camera chính diện',
                         border: OutlineInputBorder(),
                         isDense: true,
-                      ),
+                      ).localized(context),
                       items: availableIndexes
                           .map((index) => DropdownMenuItem(
                                 value: index,
@@ -306,7 +436,7 @@ class _TabScanState extends State<TabScan> {
                         labelText: 'Camera mặt phẳng dọc',
                         border: OutlineInputBorder(),
                         isDense: true,
-                      ),
+                      ).localized(context),
                       items: availableIndexes
                           .map((index) => DropdownMenuItem(
                                 value: index,
@@ -417,7 +547,12 @@ class _TabScanState extends State<TabScan> {
           .timeout(const Duration(seconds: 3));
       if (response.statusCode != 200) return;
       final decoded = jsonDecode(response.body) as List;
-      final segments = decoded.whereType<Map<String, dynamic>>().map((item) {
+      final segments = decoded
+          .whereType<Map<String, dynamic>>()
+          // The complete recording is created automatically when recording
+          // stops. This list is reserved for user-defined marker clips.
+          .where((item) => item['scanType'] != 'full_recording')
+          .map((item) {
         return AnalysisSegment(
           start: (item['startOffsetSec'] as num?)?.toDouble() ?? 0,
           end: (item['endOffsetSec'] as num?)?.toDouble() ?? 0,
@@ -445,7 +580,8 @@ class _TabScanState extends State<TabScan> {
     return null;
   }
 
-  bool get _usingPlaybackSource => _useDemoVideos || _selectedRecording != null;
+  bool get _usingPlaybackSource =>
+      _useReferenceReplay || _selectedRecording != null;
 
   Future<void> _loadRecordings(
     String sessionId, {
@@ -726,6 +862,14 @@ class _TabScanState extends State<TabScan> {
       _pendingStart = null;
       _segments.clear();
     });
+    if (provider.lastRecordingWarnings.isNotEmpty && mounted) {
+      AppAlert.show(
+        context,
+        'Đang lưu video raw. Lưu ý: '
+        '${provider.lastRecordingWarnings.first}',
+        tone: AppAlertTone.warning,
+      );
+    }
   }
 
   Future<void> _stopRecording(SessionProvider provider) async {
@@ -739,12 +883,47 @@ class _TabScanState extends State<TabScan> {
     final sessionId = provider.activeSession?.id;
     if (sessionId != null) {
       await _loadRecordings(sessionId, force: true);
+      if (provider.activeSession?.isReference == true &&
+          _savedRecordings.isNotEmpty &&
+          mounted) {
+        setState(() => _selectedRecordingId = _savedRecordings.first.id);
+      }
+    }
+    if (provider.lastRecordingWarnings.isNotEmpty && mounted) {
+      AppAlert.show(
+        context,
+        'Đã lưu video. Lưu ý dữ liệu: '
+        '${provider.lastRecordingWarnings.first}',
+        tone: AppAlertTone.warning,
+      );
+      return;
     }
     _message(
       hadPendingMarker
           ? 'Phi\u00ean ghi \u0111\u00e3 d\u1eebng. M\u1ed1c \u0111\u1ea7u cu\u1ed1i c\u00f9ng ch\u01b0a c\u00f3 m\u1ed1c cu\u1ed1i n\u00ean kh\u00f4ng \u0111\u01b0\u1ee3c l\u01b0u.'
-          : '\u0110\u00e3 d\u1eebng v\u00e0 l\u01b0u video g\u1ed1c c\u1ee7a phi\u00ean \u0111o.',
+          : provider.activeSession?.isReference == true
+              ? 'Đã dừng ghi. Hãy xem lại rồi bấm LƯU VIDEO MẪU nếu đạt.'
+              : '\u0110\u00e3 l\u01b0u B\u1ea3n ghi \u0111\u1ea7y \u0111\u1ee7 \u0111\u1ec3 ph\u00e2n t\u00edch. C\u00e1c m\u1ed1c \u0111\u01b0\u1ee3c l\u01b0u th\u00e0nh \u0111o\u1ea1n c\u1eaft ri\u00eang.',
     );
+  }
+
+  Future<void> _approveReferenceRecording(
+    GaitSession session,
+    _SavedRecording recording,
+  ) async {
+    try {
+      final response = await http
+          .post(Uri.parse(
+            'http://127.0.0.1:8000/sessions/${session.id}/recordings/${recording.id}/approve-reference',
+          ))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) throw Exception(response.body);
+      await _loadRecordings(session.id, force: true);
+      if (mounted) setState(() => _selectedRecordingId = recording.id);
+      _message('Đã duyệt và lưu bộ video vào thư viện video mẫu.');
+    } catch (error) {
+      _message('Không lưu được video mẫu: $error', error: true);
+    }
   }
 
   Future<void> _toggleMarker(
@@ -774,7 +953,9 @@ class _TabScanState extends State<TabScan> {
       return;
     }
 
-    final label = '\u0110o\u1ea1n ph\u00e2n t\u00edch ${_segments.length + 1}';
+    final label = session.isReference
+        ? 'Đoạn mẫu ${_segments.length + 1}'
+        : '\u0110o\u1ea1n ph\u00e2n t\u00edch ${_segments.length + 1}';
     final error = await provider.createVirtualSegment(start, now, label);
     if (error != null) {
       _message(error, error: true);
@@ -805,10 +986,19 @@ class _TabScanState extends State<TabScan> {
     }
 
     final scanIsActive = provider.activeTabIndex == 2;
+    final referenceReplayRequested =
+        provider.referenceReplayRequest != _handledReferenceReplayRequest;
+    if (scanIsActive && referenceReplayRequested) {
+      _handledReferenceReplayRequest = provider.referenceReplayRequest;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _selectVideoSource('reference');
+      });
+    }
     if (scanIsActive &&
         _cameraStatusLoaded &&
         !_cameraConfigured &&
         !_usingPlaybackSource &&
+        !referenceReplayRequested &&
         !_setupPromptShown) {
       _setupPromptShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -851,11 +1041,21 @@ class _TabScanState extends State<TabScan> {
                           session: session,
                         ),
                       ),
-                      RecordingTimeline(
-                        duration: session.recordingElapsedSec,
-                        segments: _segments,
-                        pendingStart: _pendingStart,
-                      ),
+                      if (_useReferenceReplay)
+                        ValueListenableBuilder<double>(
+                          valueListenable: _referenceReplayPosition,
+                          builder: (_, position, __) => RecordingTimeline(
+                            duration: position,
+                            totalDuration: _referenceDurationSec,
+                            segments: const [],
+                          ),
+                        )
+                      else
+                        RecordingTimeline(
+                          duration: session.recordingElapsedSec,
+                          segments: _segments,
+                          pendingStart: _pendingStart,
+                        ),
                     ],
                   ),
                 ),
@@ -908,7 +1108,7 @@ class _TabScanState extends State<TabScan> {
   ) {
     final recording = session.isRecording;
     final savedRecording = _selectedRecording;
-    final demo = _usingPlaybackSource && !recording;
+    final playback = _usingPlaybackSource && !recording;
     return Container(
       height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -925,7 +1125,7 @@ class _TabScanState extends State<TabScan> {
               shape: BoxShape.circle,
               color: recording
                   ? AppColors.critical
-                  : demo
+                  : playback
                       ? AppColors.accent
                       : AppColors.baseline,
             ),
@@ -933,11 +1133,15 @@ class _TabScanState extends State<TabScan> {
           const SizedBox(width: 9),
           Text(
             recording
-                ? '\u0110ang ghi'
-                : savedRecording != null
-                    ? 'Video \u0111\u00e3 l\u01b0u \u00b7 ${savedRecording.duration.toStringAsFixed(1)} s'
-                    : demo
-                        ? 'Video m\u1eabu \u00b7 4 c\u1eb7p \u00b7 0,8\u00d7'
+                ? session.isReference
+                    ? 'Đang thu video mẫu'
+                    : '\u0110ang ghi'
+                : _useReferenceReplay
+                    ? 'Video mẫu · khung xương camera · 0,8× · FSR'
+                    : savedRecording != null
+                        ? session.isReference
+                            ? 'Video mẫu ${savedRecording.referenceStatus == 'approved' ? 'đã duyệt' : 'chờ duyệt'} · ${savedRecording.duration.toStringAsFixed(1)} s'
+                            : 'Video \u0111\u00e3 l\u01b0u \u00b7 ${savedRecording.duration.toStringAsFixed(1)} s'
                         : 'Phi\u00ean ghi \u0111\u00e3 d\u1eebng',
             style: const TextStyle(
               fontSize: 13,
@@ -1000,6 +1204,25 @@ class _TabScanState extends State<TabScan> {
               ),
             ),
           ] else ...[
+            if (session.isReference &&
+                savedRecording != null &&
+                savedRecording.referenceStatus == 'draft') ...[
+              OutlinedButton.icon(
+                onPressed: () =>
+                    _approveReferenceRecording(session, savedRecording),
+                icon: const Icon(Icons.verified_outlined, size: 16),
+                label: const Text('LƯU VIDEO MẪU'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.warning,
+                  side: const BorderSide(color: AppColors.warning),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
             if (_segments.isNotEmpty || session.scans.isNotEmpty) ...[
               TextButton.icon(
                 onPressed: () => provider.setTabIndex(3),
@@ -1015,7 +1238,11 @@ class _TabScanState extends State<TabScan> {
                       ? () => _startRecording(provider)
                       : _showCameraSetupDialog,
               icon: const Icon(Icons.fiber_manual_record, size: 15),
-              label: const Text('B\u1eaeT \u0110\u1ea6U GHI'),
+              label: Text(
+                session.isReference
+                    ? 'BẮT ĐẦU THU MẪU'
+                    : 'B\u1eaeT \u0110\u1ea6U GHI',
+              ),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -1031,162 +1258,256 @@ class _TabScanState extends State<TabScan> {
 
   Widget _workspaceToolbar(GaitSession session) {
     final savedRecording = _selectedRecording;
-    final sourceLabel = savedRecording != null
-        ? 'VIDEO \u0110\u00c3 L\u01afU'
-        : _useDemoVideos
-            ? 'VIDEO M\u1eaaU 0,8\u00d7'
+    final sourceLabel = _useReferenceReplay
+        ? 'VIDEO MẪU 0,8×'
+        : savedRecording != null
+            ? savedRecording.isReference
+                ? 'VIDEO MẪU ${savedRecording.referenceStatus == 'approved' ? 'ĐÃ DUYỆT' : 'BẢN NHÁP'}'
+                : 'VIDEO \u0110\u00c3 L\u01afU'
             : 'CAMERA TH\u1eacT';
-    return SizedBox(
-      height: 34,
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
-            icon: const Icon(Icons.menu, size: 20),
-            tooltip: 'M\u1edf menu',
-            visualDensity: VisualDensity.compact,
-          ),
-          const Text(
-            'SCAN / GAIT ANALYSIS',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const Spacer(),
-          PopupMenuButton<String>(
-            enabled: !session.isRecording,
-            tooltip: 'Ch\u1ecdn ngu\u1ed3n video',
-            onSelected: (value) {
-              setState(() {
-                _useDemoVideos = value == 'bundled';
-                _selectedRecordingId =
-                    value.startsWith('saved:') ? value.substring(6) : null;
-              });
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'live',
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(Icons.videocam_outlined),
-                  title: Text('Camera th\u1eadt'),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 760;
+        return SizedBox(
+          height: 34,
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
+                icon: const Icon(Icons.menu, size: 20),
+                tooltip: context.tr('M\u1edf menu'),
+                visualDensity: VisualDensity.compact,
+              ),
+              Text(
+                compact ? 'SCAN' : 'SCAN / GAIT ANALYSIS',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.5,
                 ),
               ),
-              const PopupMenuItem(
-                value: 'bundled',
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(Icons.movie_outlined),
-                  title: Text('Video m\u1eabu c\u00f3 s\u1eb5n'),
-                ),
-              ),
-              for (final item in _savedRecordings)
-                PopupMenuItem(
-                  value: 'saved:${item.id}',
-                  child: ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.video_library_outlined),
-                    title: Text('B\u1ed9 video ${item.shortId}'),
-                    subtitle: Text(
-                      '${item.duration.toStringAsFixed(1)} s \u00b7 ${item.startedAt}',
+              const Spacer(),
+              if (compact)
+                IconButton(
+                  onPressed: session.isRecording
+                      ? null
+                      : () => _selectVideoSource(
+                            _useReferenceReplay ? 'live' : 'reference',
+                          ),
+                  icon: Icon(
+                    _useReferenceReplay
+                        ? Icons.videocam_outlined
+                        : Icons.play_circle_outline,
+                    size: 18,
+                  ),
+                  color: _useReferenceReplay
+                      ? AppColors.accentGreen
+                      : AppColors.accent,
+                  tooltip: context.tr(
+                    _useReferenceReplay ? 'Về camera thật' : 'Mở video mẫu',
+                  ),
+                  visualDensity: VisualDensity.compact,
+                )
+              else
+                Tooltip(
+                  message: context.tr(
+                    _useReferenceReplay
+                        ? 'Trở về hai camera đang kết nối'
+                        : 'Phát bộ $_referenceArchiveId như nguồn camera trực tiếp',
+                  ),
+                  child: OutlinedButton.icon(
+                    onPressed: session.isRecording
+                        ? null
+                        : () => _selectVideoSource(
+                              _useReferenceReplay ? 'live' : 'reference',
+                            ),
+                    icon: Icon(
+                      _useReferenceReplay
+                          ? Icons.videocam_outlined
+                          : Icons.play_circle_outline,
+                      size: 16,
+                    ),
+                    label: Text(
+                      _useReferenceReplay ? 'VỀ CAMERA THẬT' : 'VIDEO MẪU',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      foregroundColor: _useReferenceReplay
+                          ? AppColors.accentGreen
+                          : AppColors.accent,
+                      side: BorderSide(
+                        color: (_useReferenceReplay
+                                ? AppColors.accentGreen
+                                : AppColors.accent)
+                            .withValues(alpha: 0.75),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
-            ],
-            child: IgnorePointer(
-              child: OutlinedButton.icon(
-                onPressed: session.isRecording ? null : () {},
-                icon: Icon(
-                  savedRecording != null
-                      ? Icons.video_library_outlined
-                      : _useDemoVideos
-                          ? Icons.movie_outlined
-                          : Icons.videocam_outlined,
-                  size: 16,
-                ),
-                label: Text(sourceLabel),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(0, 28),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  textStyle: const TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
+              const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                enabled: !session.isRecording,
+                tooltip:
+                    context.tr('Chọn mẫu để xem hoặc chuyển về camera thật'),
+                onSelected: _selectVideoSource,
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'live',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.videocam_outlined),
+                      title: Text('Camera th\u1eadt'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'reference',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.play_circle_outline),
+                      title: Text('Video mẫu'),
+                      subtitle: Text('2 camera + khung xương + FSR · 0,8×'),
+                    ),
+                  ),
+                  for (final item in _savedRecordings)
+                    PopupMenuItem(
+                      value: 'saved:${item.id}',
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.video_library_outlined),
+                        title: Text(
+                          '${item.isReference ? 'Mẫu · ' : ''}B\u1ed9 video ${item.shortId}',
+                        ),
+                        subtitle: Text(
+                          '${item.duration.toStringAsFixed(1)} s \u00b7 ${item.startedAt}',
+                        ),
+                      ),
+                    ),
+                ],
+                child: compact
+                    ? SizedBox(
+                        width: 34,
+                        height: 28,
+                        child: Icon(
+                          _useReferenceReplay
+                              ? Icons.play_circle_outline
+                              : savedRecording != null
+                                  ? Icons.video_library_outlined
+                                  : Icons.videocam_outlined,
+                          size: 17,
+                          color: AppColors.textSecondary,
+                        ),
+                      )
+                    : IgnorePointer(
+                        child: OutlinedButton.icon(
+                          onPressed: session.isRecording ? null : () {},
+                          icon: Icon(
+                            _useReferenceReplay
+                                ? Icons.play_circle_outline
+                                : savedRecording != null
+                                    ? Icons.video_library_outlined
+                                    : Icons.videocam_outlined,
+                            size: 16,
+                          ),
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('CHỌN MẪU · $sourceLabel'),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.arrow_drop_down, size: 16),
+                            ],
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 28),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            textStyle: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: session.isRecording ||
+                          _swappingCameras ||
+                          _usingPlaybackSource
+                      ? null
+                      : () => _swapCameras(session),
+                  icon: _swappingCameras
+                      ? const SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(strokeWidth: 1.7),
+                        )
+                      : const Icon(Icons.swap_horiz, size: 16),
+                  label:
+                      Text(_camerasSwapped ? 'TRẢ LẠI CAM' : 'ĐẢO CAM 1 ↔ 2'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    textStyle: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed:
-                session.isRecording || _swappingCameras || _usingPlaybackSource
-                    ? null
-                    : () => _swapCameras(session),
-            icon: _swappingCameras
-                ? const SizedBox(
-                    width: 13,
-                    height: 13,
-                    child: CircularProgressIndicator(strokeWidth: 1.7),
-                  )
-                : const Icon(Icons.swap_horiz, size: 16),
-            label: Text(_camerasSwapped ? 'TRẢ LẠI CAM' : 'ĐẢO CAM 1 ↔ 2'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 28),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              textStyle: const TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (!_usingPlaybackSource && !_singleCameraMode) ...[
-            OutlinedButton.icon(
-              onPressed: session.isRecording
-                  ? null
-                  : () => _showStereoCalibrationDialog(),
-              icon: Icon(
-                _stereoCalibrationCompatible
-                    ? Icons.view_in_ar_outlined
-                    : Icons.tune,
-                size: 15,
-              ),
-              label: Text(
-                _stereoCalibrationCompatible
-                    ? 'STEREO 3D ĐÃ CHUẨN'
-                    : 'HIỆU CHUẨN 3D',
-              ),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(0, 28),
-                padding: const EdgeInsets.symmetric(horizontal: 9),
-                foregroundColor:
-                    _stereoCalibrationCompatible ? AppColors.accentGreen : null,
-                textStyle: const TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
+                const SizedBox(width: 12),
+              ],
+              if (!compact && !_usingPlaybackSource && !_singleCameraMode) ...[
+                OutlinedButton.icon(
+                  onPressed: session.isRecording
+                      ? null
+                      : () => _showStereoCalibrationDialog(),
+                  icon: Icon(
+                    _stereoCalibrationCompatible
+                        ? Icons.view_in_ar_outlined
+                        : Icons.tune,
+                    size: 15,
+                  ),
+                  label: Text(
+                    _stereoCalibrationCompatible
+                        ? 'STEREO 3D ĐÃ CHUẨN'
+                        : 'HIỆU CHUẨN 3D',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 9),
+                    foregroundColor: _stereoCalibrationCompatible
+                        ? AppColors.accentGreen
+                        : null,
+                    textStyle: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-          ],
-          if (!_usingPlaybackSource && !_singleCameraMode) ...[
-            _cameraSyncChip(),
-            const SizedBox(width: 12),
-          ],
-          if (_selectedCharts.isNotEmpty)
-            Text(
-              '${_selectedCharts.length} bi\u1ec3u \u0111\u1ed3 \u0111ang hi\u1ec3n th\u1ecb',
-              style: const TextStyle(
-                fontSize: 9,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          const SizedBox(width: 12),
-        ],
-      ),
+                const SizedBox(width: 12),
+              ],
+              if (!compact && !_usingPlaybackSource && !_singleCameraMode) ...[
+                _cameraSyncChip(),
+                const SizedBox(width: 12),
+              ],
+              if (!compact && _selectedCharts.isNotEmpty)
+                Text(
+                  '${_selectedCharts.length} bi\u1ec3u \u0111\u1ed3 \u0111ang hi\u1ec3n th\u1ecb',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              if (!compact) const SizedBox(width: 12),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1198,6 +1519,27 @@ class _TabScanState extends State<TabScan> {
       builder: (context, constraints) {
         if (_selectedCharts.isEmpty) {
           return _cameraWorkspace(session);
+        }
+
+        if (constraints.maxWidth < 900) {
+          return Column(
+            children: [
+              Expanded(
+                flex: 5,
+                child: _cameraWorkspace(
+                  session,
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 3),
+                ),
+              ),
+              Expanded(
+                flex: 6,
+                child: _chartWorkspace(
+                  patient,
+                  margin: const EdgeInsets.fromLTRB(8, 3, 8, 7),
+                ),
+              ),
+            ],
+          );
         }
 
         final availableWidth = max(0.0, constraints.maxWidth - 24);
@@ -1244,9 +1586,11 @@ class _TabScanState extends State<TabScan> {
             ? 'ĐANG GHÉP KHUNG'
             : 'CHỜ POSE 2 CAM';
     return Tooltip(
-      message: synchronized
-          ? 'Hai camera đang được ghép theo thời điểm chụp; góc gập lấy từ camera dọc và nghiêng chậu lấy từ camera chính diện.'
-          : 'Cần thấy đủ cơ thể ở cả hai camera để ghép dữ liệu.',
+      message: context.tr(
+        synchronized
+            ? 'Hai camera đang được ghép theo thời điểm chụp; góc gập lấy từ camera dọc và nghiêng chậu lấy từ camera chính diện.'
+            : 'Cần thấy đủ cơ thể ở cả hai camera để ghép dữ liệu.',
+      ),
       child: Container(
         height: 28,
         padding: const EdgeInsets.symmetric(horizontal: 9),
@@ -1281,45 +1625,114 @@ class _TabScanState extends State<TabScan> {
     final savedRecording = _selectedRecording;
     return Padding(
       padding: padding,
-      child: Row(
+      child: Column(
         children: [
+          _lateralTrunkGuidance(),
           Expanded(
-            child: _cameraCard(
-              title: _useDemoVideos
-                  ? 'VIDEO M\u1eaaU \u00b7 CH\u00cdNH DI\u1ec6N'
-                  : savedRecording != null
-                      ? 'VIDEO \u0110\u00c3 L\u01afU \u00b7 CH\u00cdNH DI\u1ec6N'
-                      : 'CH\u00cdNH DI\u1ec6N · CAM ${_frontalCameraIndex ?? '—'}',
-              url: _useDemoVideos
-                  ? 'assets/assets/demo/demo_frontal_x08.mp4?v=mediapipe3'
-                  : savedRecording != null
-                      ? 'http://127.0.0.1:8000${savedRecording.frontalUrl}&loop=true'
-                      : 'http://127.0.0.1:8000/video_feed_0',
-              connected: _usingPlaybackSource ? true : _camera0Connected,
-              poseDetected: _usingPlaybackSource ? true : _camera0PoseDetected,
-              isVideoFile: _useDemoVideos,
-              isSavedVideo: savedRecording != null,
-              session: session,
+            child: Row(
+              children: [
+                Expanded(
+                  child: _cameraCard(
+                    title: _useReferenceReplay
+                        ? 'VIDEO MẪU · CHÍNH DIỆN'
+                        : savedRecording != null
+                            ? 'VIDEO \u0110\u00c3 L\u01afU \u00b7 CH\u00cdNH DI\u1ec6N'
+                            : 'CH\u00cdNH DI\u1ec6N · CAM ${_frontalCameraIndex ?? '—'}',
+                    url: _useReferenceReplay
+                        ? _referenceVideoUrl(
+                            _referenceFrontalVideoId,
+                            'frontal',
+                          )
+                        : savedRecording != null
+                            ? 'http://127.0.0.1:8000${savedRecording.frontalUrl}&loop=true'
+                            : 'http://127.0.0.1:8000/video_feed_0?preview=$_cameraStreamSession',
+                    connected: _usingPlaybackSource ? true : _camera0Connected,
+                    poseDetected:
+                        _usingPlaybackSource ? true : _camera0PoseDetected,
+                    isVideoFile: false,
+                    isSavedVideo: _useReferenceReplay || savedRecording != null,
+                    isReferenceReplay: _useReferenceReplay,
+                    poseReplayView: null,
+                    session: session,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _cameraCard(
+                    title: _useReferenceReplay
+                        ? 'VIDEO MẪU · MẶT PHẲNG DỌC'
+                        : savedRecording != null
+                            ? 'VIDEO \u0110\u00c3 L\u01afU \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC'
+                            : 'M\u1eb6T PH\u1eb2NG D\u1eccC · CAM ${_sagittalCameraIndex ?? '—'}',
+                    url: _useReferenceReplay
+                        ? _referenceVideoUrl(
+                            _referenceSagittalVideoId,
+                            'sagittal',
+                          )
+                        : savedRecording != null
+                            ? 'http://127.0.0.1:8000${savedRecording.sagittalUrl}&loop=true'
+                            : 'http://127.0.0.1:8000/video_feed_1?preview=$_cameraStreamSession',
+                    connected: _usingPlaybackSource ? true : _camera1Connected,
+                    poseDetected:
+                        _usingPlaybackSource ? true : _camera1PoseDetected,
+                    isVideoFile: false,
+                    isSavedVideo: _useReferenceReplay || savedRecording != null,
+                    isReferenceReplay: _useReferenceReplay,
+                    poseReplayView: null,
+                    session: session,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 10),
+        ],
+      ),
+    );
+  }
+
+  Widget _lateralTrunkGuidance() {
+    final feedback = _lateralTrunkFeedback;
+    final status = feedback?['status']?.toString();
+    if (status != 'warning' && status != 'critical') {
+      return const SizedBox.shrink();
+    }
+    final critical = status == 'critical';
+    final color = critical ? AppColors.critical : AppColors.warning;
+    final message =
+        feedback?['message']?.toString() ?? 'Phát hiện thân nghiêng trái–phải.';
+    final recommendation = feedback?['recommendation']?.toString() ??
+        'Đưa vai và lồng ngực về giữa hai hông.';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            critical ? Icons.error_outline : Icons.assistant_direction_outlined,
+            size: 17,
+            color: color,
+          ),
+          const SizedBox(width: 8),
           Expanded(
-            child: _cameraCard(
-              title: _useDemoVideos
-                  ? 'VIDEO M\u1eaaU \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC'
-                  : savedRecording != null
-                      ? 'VIDEO \u0110\u00c3 L\u01afU \u00b7 M\u1eb6T PH\u1eb2NG D\u1eccC'
-                      : 'M\u1eb6T PH\u1eb2NG D\u1eccC · CAM ${_sagittalCameraIndex ?? '—'}',
-              url: _useDemoVideos
-                  ? 'assets/assets/demo/demo_sagittal_x08.mp4?v=mediapipe3'
-                  : savedRecording != null
-                      ? 'http://127.0.0.1:8000${savedRecording.sagittalUrl}&loop=true'
-                      : 'http://127.0.0.1:8000/video_feed_1',
-              connected: _usingPlaybackSource ? true : _camera1Connected,
-              poseDetected: _usingPlaybackSource ? true : _camera1PoseDetected,
-              isVideoFile: _useDemoVideos,
-              isSavedVideo: savedRecording != null,
-              session: session,
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$message ',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  TextSpan(text: recommendation),
+                ],
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: color),
             ),
           ),
         ],
@@ -1334,23 +1747,27 @@ class _TabScanState extends State<TabScan> {
     bool? poseDetected,
     bool isVideoFile = false,
     bool isSavedVideo = false,
+    bool isReferenceReplay = false,
+    String? poseReplayView,
     required GaitSession session,
   }) {
     final poseMissing = !isVideoFile &&
         !isSavedVideo &&
         connected == true &&
         poseDetected == false;
-    final stateText = isSavedVideo
-        ? 'Video \u0111\u00e3 l\u01b0u'
-        : isVideoFile
-            ? 'Video m\u1eabu \u00b7 4 c\u1eb7p \u00b7 0,8\u00d7'
-            : connected == null
-                ? '\u0110ang k\u1ebft n\u1ed1i'
-                : connected
-                    ? poseMissing
-                        ? 'Ch\u01b0a th\u1ea5y to\u00e0n th\u00e2n'
-                        : '\u0110ang ho\u1ea1t \u0111\u1ed9ng'
-                    : 'M\u1ea5t t\u00edn hi\u1ec7u';
+    final stateText = isReferenceReplay
+        ? 'Video mẫu · 0,8×'
+        : isSavedVideo
+            ? 'Video \u0111\u00e3 l\u01b0u'
+            : isVideoFile
+                ? 'Video m\u1eabu \u00b7 4 c\u1eb7p \u00b7 0,8\u00d7'
+                : connected == null
+                    ? '\u0110ang k\u1ebft n\u1ed1i'
+                    : connected
+                        ? poseMissing
+                            ? 'Chưa nhận được tư thế'
+                            : '\u0110ang ho\u1ea1t \u0111\u1ed9ng'
+                        : 'M\u1ea5t t\u00edn hi\u1ec7u';
     final stateColor = isVideoFile || isSavedVideo
         ? AppColors.accent
         : connected == null
@@ -1403,6 +1820,24 @@ class _TabScanState extends State<TabScan> {
                             ),
                           ),
           ),
+          if (isReferenceReplay && poseReplayView != null)
+            Positioned.fill(
+              child: ValueListenableBuilder<double>(
+                valueListenable: _referenceReplayPosition,
+                builder: (context, position, _) {
+                  return PoseReplayOverlay(
+                    key: ValueKey(
+                      '$_referenceScanId-$poseReplayView-'
+                      '$_referenceAnalysisRevision',
+                    ),
+                    scanId: _referenceScanId,
+                    view: poseReplayView,
+                    position: position,
+                    analysisRevision: _referenceAnalysisRevision,
+                  );
+                },
+              ),
+            ),
           Positioned(
             left: 9,
             top: 9,
@@ -1504,14 +1939,30 @@ class _TabScanState extends State<TabScan> {
             ),
           ),
           Expanded(
-            child: RealtimeChartWorkspace(
-              selectedCharts: _selectedCharts,
-              healthySide: patient.healthyLeg.name,
-              demoMode: _useDemoVideos,
-            ),
+            child: _useReferenceReplay
+                ? ValueListenableBuilder<double>(
+                    valueListenable: _referenceReplayPosition,
+                    builder: (context, position, _) =>
+                        _realtimeChartContent(patient, position),
+                  )
+                : _realtimeChartContent(patient, 0),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _realtimeChartContent(Patient patient, double replayPosition) {
+    return RealtimeChartWorkspace(
+      selectedCharts: _selectedCharts,
+      healthySide: patient.healthyLeg.name,
+      patientHeightCm: patient.heightCm,
+      leftLegLengthCm: patient.leftLegLengthCm,
+      rightLegLengthCm: patient.rightLegLengthCm,
+      gaitReplayScanId: _useReferenceReplay ? _referenceScanId : null,
+      fsrReplayScanId: _useReferenceReplay ? _referenceFsrScanId : null,
+      replayPosition: replayPosition,
+      replayFsrLabel: _useReferenceReplay ? 'FSR video mẫu' : null,
     );
   }
 
@@ -1537,7 +1988,7 @@ class _TabScanState extends State<TabScan> {
                     IconButton(
                       onPressed: () => setState(() => _sidebarOpen = false),
                       icon: const Icon(Icons.menu_open),
-                      tooltip: '\u0110\u00f3ng menu',
+                      tooltip: context.tr('\u0110\u00f3ng menu'),
                     ),
                     const Text(
                       'WORKSPACE',
@@ -1602,7 +2053,7 @@ class _TabScanState extends State<TabScan> {
                               controlAffinity: ListTileControlAffinity.leading,
                               value: _selectedCharts.contains(chart),
                               title: Text(
-                                chart.label,
+                                chart.selectionLabel,
                                 style: const TextStyle(fontSize: 11),
                               ),
                               onChanged: (checked) {
@@ -1650,8 +2101,14 @@ class _TabScanState extends State<TabScan> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          'B\u1ec7nh nh\u00e2n: ${patient.name}',
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(text: context.tr('Bệnh nhân: ')),
+                              TextSpan(text: patient.name),
+                            ],
+                          ),
+                          translate: false,
                           style: const TextStyle(
                             fontSize: 10,
                             color: AppColors.textSecondary,

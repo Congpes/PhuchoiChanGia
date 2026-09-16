@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 import 'package:provider/provider.dart';
 
 import 'app_alert.dart';
@@ -87,8 +90,16 @@ class _TabHistoryState extends State<TabHistory> {
                   const SizedBox(height: 16),
                   const Divider(),
                   const SizedBox(height: 8),
-                  Text('BỆNH NHÂN: ${patient.name}',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: context.tr('BỆNH NHÂN: ')),
+                        TextSpan(text: patient.name),
+                      ],
+                    ),
+                    translate: false,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   Text(
                       'Tuổi: ${patient.age} | Chiều cao: ${patient.heightCm}cm | Cân nặng: ${patient.weightKg}kg'),
                   Text(
@@ -273,7 +284,7 @@ class _TabHistoryState extends State<TabHistory> {
                         children: [
                           const Padding(
                               padding: EdgeInsets.all(8),
-                              child: Text('Sải chân (Stride Length)',
+                              child: Text('Sải chân ước tính (Stride Length)',
                                   style: TextStyle(fontSize: 11))),
                           Padding(
                               padding: const EdgeInsets.all(8),
@@ -687,7 +698,7 @@ class _TabHistoryState extends State<TabHistory> {
                                         ),
                                         const SizedBox(height: 12),
                                         _buildComparisonRow(
-                                          'Sải chân Stride (Sau chỉnh)',
+                                          'Sải chân ước tính (Sau chỉnh)',
                                           '${scan2?.strideLength?.toStringAsFixed(2) ?? "N/A"} m',
                                           color: AppColors.accent,
                                         ),

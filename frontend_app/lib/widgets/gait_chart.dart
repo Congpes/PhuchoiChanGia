@@ -1,5 +1,8 @@
 import 'package:fl_chart/fl_chart.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/localized_text.dart';
+import 'smoothed_line_chart.dart';
 
 import '../models/gait_data.dart';
 import '../theme/app_theme.dart';
@@ -75,7 +78,7 @@ class GaitChart extends StatelessWidget {
                       textAlign: TextAlign.center,
                     ),
                   )
-                : LineChart(
+                : SmoothedLineChart(
                     _buildChartData(primaryCurve!, secondaryCurve),
                     duration: Duration.zero,
                   ),
@@ -155,7 +158,7 @@ class GaitChart extends StatelessWidget {
       lineBarsData: [
         LineChartBarData(
           spots: spots,
-          isCurved: true,
+          isCurved: false,
           color: lineColor,
           barWidth: 2,
           dotData: const FlDotData(show: false),
@@ -167,7 +170,7 @@ class GaitChart extends StatelessWidget {
         if (secondarySpots.isNotEmpty)
           LineChartBarData(
             spots: secondarySpots,
-            isCurved: true,
+            isCurved: false,
             color: AppColors.baseline,
             barWidth: 1.5,
             dashArray: [6, 4],

@@ -14,6 +14,45 @@ except ImportError:
     serial = None
     list_ports = None
 
+try:
+    # Use the shared project implementation when this file is run in AI-ProGait.
+    from backend.fsr_force import matrix_to_newton
+except (ImportError, ModuleNotFoundError):
+    # Standalone fallback: keep this app usable when only FSR_Transmitter.py is
+    # copied to another Windows computer. Keep these constants synchronized
+    # with backend/fsr_force.py.
+    def _analog_to_weight_smooth(adc):
+        value = float(adc)
+        if value >= 4950.0:
+            return 0.0
+        if value > 680.0:
+            return max(0.0, -0.0868 * value + 434.03)
+        return 132728.45 * value ** (-0.889) if value > 0 else 0.0
+
+    def _gram_to_newton(gram):
+        return max(0.0, float(gram) * 9.80665 / 1000.0)
+
+    def matrix_to_newton(matrix, unit):
+        normalized_unit = str(unit or "raw_adc").strip().lower()
+        values = [[float(value) for value in row] for row in matrix]
+        if normalized_unit == "newton":
+            return (
+                [[max(0.0, value) for value in row] for row in values],
+                "N",
+                "packet",
+            )
+        if normalized_unit == "gram":
+            force_values = [
+                [_gram_to_newton(value) for value in row]
+                for row in values
+            ]
+        else:
+            force_values = [
+                [_gram_to_newton(_analog_to_weight_smooth(value)) for value in row]
+                for row in values
+            ]
+        return force_values, "N_estimated", "formula_estimate"
+
 DEFAULT_TARGET_IP = "127.0.0.1"
 DEFAULT_TARGET_PORT = 8765
 DEFAULT_SEND_RATE_HZ = 20
@@ -21,6 +60,23 @@ DEFAULT_BAUDRATE = 9600
 DEFAULT_SERIAL_TIMEOUT = 0.5
 MIN_FORCE = 30.0
 MAX_FORCE = 5500.0
+
+
+def is_outgoing_bluetooth_port(port_info):
+    """Windows Bluetooth SPP uses LOCALMFG&0002 for the connect-out port."""
+    return "LOCALMFG&0002" in str(getattr(port_info, "hwid", "")).upper()
+
+
+def selectable_fsr_ports(port_infos):
+    """Return ports that can actually connect to FSR modules, never SPP input."""
+    infos = list(port_infos)
+    outgoing = [item for item in infos if is_outgoing_bluetooth_port(item)]
+    if outgoing:
+        return outgoing
+    return [
+        item for item in infos
+        if "LOCALMFG&0000" not in str(getattr(item, "hwid", "")).upper()
+    ]
 
 INDEX_MAP_RR = [
     [  36,     24,     12,     0  ],  
@@ -37,12 +93,14 @@ INDEX_MAP_RR = [
     [  42,     30,     18,     6  ],  
 ]
 
-INDEX_MAP_LL = [row[::-1] for row in INDEX_MAP_RR]
+# Hardware convention verified with FSR_Transmitter_2.py: the module marked RR
+# is worn on the physical LEFT foot and that insole is mirrored across columns.
+# The module marked LL is worn on the physical RIGHT foot and keeps native order.
+INDEX_MAP_LEFT = [row[::-1] for row in INDEX_MAP_RR]
 
 
 def get_force_color(value, min_val=MIN_FORCE, max_val=MAX_FORCE):
-    DEADZONE = 30.0
-    if value < DEADZONE or value < min_val:
+    if value < min_val:
         return "#111827"
 
     t = min(max((value - min_val) / (max_val - min_val), 0.0), 1.0)
@@ -81,13 +139,35 @@ def validate_matrix(matrix):
     return normalized
 
 
+def unit_label(unit):
+    return {
+        'raw_adc': 'ADC thô',
+        'newton': 'Newton (N, ước tính)',
+    }.get(str(unit).strip().lower(), 'ADC thô')
+
+
+def matrix_for_unit(raw_adc_matrix, unit):
+    '''Convert raw ADC values to the unit selected for preview and UDP.'''
+    raw_adc_matrix = validate_matrix(raw_adc_matrix)
+    if str(unit).strip().lower() == 'newton':
+        force_matrix, _, _ = matrix_to_newton(raw_adc_matrix, 'raw_adc')
+        return force_matrix
+    return [row[:] for row in raw_adc_matrix]
+
+
+def color_range_for_unit(unit):
+    if str(unit).strip().lower() == 'newton':
+        return 0.05, 80.0
+    return MIN_FORCE, MAX_FORCE
+
+
 def parse_hardware_frame(values_list, side, expected_rows=None, expected_columns=None):
     total_values = len(values_list)
     if total_values == 0:
         raise ValueError("Không tìm thấy dữ liệu")
 
     if total_values == 48:
-        mapping = INDEX_MAP_LL if side == "left" else INDEX_MAP_RR
+        mapping = INDEX_MAP_LEFT if side == "left" else INDEX_MAP_RR
         matrix = []
         for row_indices in mapping:
             row_vals = [values_list[idx] for idx in row_indices]
@@ -120,8 +200,16 @@ def matrix_summary(matrix):
     return total, weighted_x / total, weighted_y / total
 
 
-def build_packet(device_id, side, unit, sequence, matrix):
-    return {
+def build_packet(
+    device_id,
+    side,
+    unit,
+    sequence,
+    matrix,
+    hardware_marker=None,
+    raw_matrix=None,
+):
+    packet = {
         "type": "fsr_matrix",
         "version": 1,
         "device_id": device_id,
@@ -133,6 +221,11 @@ def build_packet(device_id, side, unit, sequence, matrix):
         "columns": len(matrix[0]),
         "values": matrix,
     }
+    if hardware_marker in ("LL", "RR"):
+        packet["hardware_marker"] = hardware_marker
+    if raw_matrix is not None:
+        packet["raw_values"] = validate_matrix(raw_matrix)
+    return packet
 
 
 class FSRTransmitterApp:
@@ -156,6 +249,7 @@ class FSRTransmitterApp:
         self.ema_alpha_value = 0.20
         self.ema_label_text = tk.StringVar(value='EMA alpha: 0.20')
         self.smoothed_matrices = {}
+        self.last_raw_matrices = {}
 
         self.preview_state = {
             "left": {"rects": [], "texts": [], "shape": (0, 0), "size": (0, 0)},
@@ -166,7 +260,12 @@ class FSRTransmitterApp:
         self.target_port = tk.StringVar(value=str(DEFAULT_TARGET_PORT))
         self.device_id = tk.StringVar(value="fsr-device-01")
         self.side = tk.StringVar(value="right")
-        self.unit = tk.StringVar(value="raw_adc")
+        self.unit = tk.StringVar(value="newton")
+        self._selected_unit = self.unit.get()
+        self.preview_unit_label = tk.StringVar(
+            value=f'Đơn vị hiển thị/gửi: {unit_label(self._selected_unit)}'
+        )
+        self.unit.trace_add('write', self._on_unit_change)
         self.rate_hz = tk.StringVar(value=str(DEFAULT_SEND_RATE_HZ))
 
         self.com_port_1 = tk.StringVar()
@@ -198,7 +297,7 @@ class FSRTransmitterApp:
             row=0, column=0, padx=(0, 5), sticky="w"
         )
         self.com_box_1 = ttk.Combobox(
-            bluetooth, textvariable=self.com_port_1, width=35, state="normal"
+            bluetooth, textvariable=self.com_port_1, width=35, state="readonly"
         )
         self.com_box_1.grid(row=0, column=1, padx=(0, 8), sticky="ew")
         self.com_box_1.bind("<Button-1>", self._refresh_com_ports_from_event)
@@ -210,7 +309,7 @@ class FSRTransmitterApp:
             row=1, column=0, padx=(0, 5), pady=(8, 0), sticky="w"
         )
         self.com_box_2 = ttk.Combobox(
-            bluetooth, textvariable=self.com_port_2, width=35, state="normal"
+            bluetooth, textvariable=self.com_port_2, width=35, state="readonly"
         )
         self.com_box_2.grid(row=1, column=1, padx=(0, 8), pady=(8, 0), sticky="ew")
         self.com_box_2.bind("<Button-1>", self._refresh_com_ports_from_event)
@@ -278,6 +377,10 @@ class FSRTransmitterApp:
             connection, textvariable=self.unit, values=("raw_adc", "newton"), width=15, state="readonly"
         ).grid(row=1, column=3, pady=(10, 0), sticky="w")
 
+        ttk.Label(connection, textvariable=self.preview_unit_label).grid(
+            row=2, column=2, columnspan=2, pady=(8, 0), sticky='w'
+        )
+
         ttk.Label(connection, textvariable=self.ema_label_text).grid(
             row=1, column=4, pady=(10, 0), padx=(12, 5), sticky='e'
         )
@@ -333,6 +436,21 @@ class FSRTransmitterApp:
         self.root.after(80, self.draw_matrix, empty_matrix, "left")
         self.root.after(80, self.draw_matrix, empty_matrix, "right")
 
+    def _on_unit_change(self, *_args):
+        selected = self.unit.get().strip().lower()
+        self._selected_unit = selected if selected in ('raw_adc', 'newton') else 'raw_adc'
+        self.preview_unit_label.set(
+            f'Đơn vị hiển thị/gửi: {unit_label(self._selected_unit)}'
+        )
+        for side, raw_matrix in list(self.last_raw_matrices.items()):
+            self.draw_matrix(
+                matrix_for_unit(raw_matrix, self._selected_unit),
+                side,
+                self._selected_unit,
+            )
+        if self.last_raw_matrices:
+            self.status.set(f'Đã đổi sang {unit_label(self._selected_unit)}')
+
     def _on_alpha_change(self, value):
         self.ema_alpha_value = min(max(float(value), 0.01), 1.0)
         self.ema_label_text.set(f'EMA alpha: {self.ema_alpha_value:.2f}')
@@ -366,15 +484,16 @@ class FSRTransmitterApp:
                 box["values"] = ()
             for variable in variables:
                 variable.set("")
-            self.status.set("Thiếu pyserial")
+            self.status.set("Thiếu pyserial – chạy: py -m pip install pyserial")
             return
 
         current_devices = [
             self._selected_com_device(variable, allow_empty=True)
             for variable in variables
         ]
+        all_ports = list(list_ports.comports())
         ports = sorted(
-            list(list_ports.comports()),
+            selectable_fsr_ports(all_ports),
             key=lambda port: self._com_sort_key(port.device),
         )
         display_values = [
@@ -389,14 +508,7 @@ class FSRTransmitterApp:
             return
 
         by_device = {item.split(" - ", 1)[0]: item for item in display_values}
-        # Windows tạo cả cổng Bluetooth chiều vào và chiều ra. Cổng LOCALMFG&0002
-        # là cổng đi ra tới module, nên ưu tiên chúng khi tự chọn.
-        outgoing_devices = [
-            port.device
-            for port in ports
-            if "LOCALMFG&0002" in (getattr(port, "hwid", "") or "").upper()
-        ]
-        preferred_devices = outgoing_devices if outgoing_devices else [port.device for port in ports]
+        preferred_devices = [port.device for port in ports]
 
         selected = []
         for current in current_devices:
@@ -419,7 +531,11 @@ class FSRTransmitterApp:
             variable.set(by_device.get(device, device))
 
         chosen = ", ".join(device for device in selected if device) or "chưa chọn"
-        self.status.set(f"Tìm thấy {len(display_values)} cổng; tự chọn {chosen}")
+        ignored = max(0, len(all_ports) - len(ports))
+        ignored_text = f"; bỏ qua {ignored} cổng Bluetooth chiều vào" if ignored else ""
+        self.status.set(
+            f"Tìm thấy {len(display_values)} cổng FSR chiều ra; tự chọn {chosen}{ignored_text}"
+        )
 
     def _refresh_com_ports_from_event(self, _event=None):
         if not self.running:
@@ -450,6 +566,18 @@ class FSRTransmitterApp:
             raise ValueError("Chưa chọn cổng COM cho FSR")
         if devices[0] and devices[0] == devices[1]:
             raise ValueError("FSR 1 và FSR 2 đang chọn cùng một cổng COM")
+
+        available = {
+            str(getattr(port, "device", ""))
+            for port in selectable_fsr_ports(list_ports.comports())
+        }
+        missing = [device for device in devices if device and device not in available]
+        if missing:
+            raise ValueError(
+                "Cổng không còn sẵn sàng hoặc là cổng Bluetooth chiều vào: "
+                + ", ".join(missing)
+                + ". Hãy bấm Quét lại."
+            )
 
         baudrate = int(self.baudrate.get())
         if baudrate <= 0:
@@ -491,7 +619,7 @@ class FSRTransmitterApp:
         return (
             self.device_id.get().strip() or "fsr-device-01",
             self.side.get(),
-            self.unit.get(),
+            self._selected_unit,
         )
 
     def _manual_matrix(self):
@@ -502,26 +630,54 @@ class FSRTransmitterApp:
 
     def preview_manual_matrix(self):
         try:
-            self.draw_matrix(self._manual_matrix(), self.side.get())
+            side = self.side.get()
+            raw_matrix = self._manual_matrix()
+            self.last_raw_matrices[side] = [row[:] for row in raw_matrix]
+            self.draw_matrix(
+                matrix_for_unit(raw_matrix, self._selected_unit),
+                side,
+                self._selected_unit,
+            )
         except ValueError as exc:
             messagebox.showerror("Lỗi", str(exc))
 
     def send_manual_once(self):
         try:
-            matrix = self._manual_matrix()
+            raw_matrix = self._manual_matrix()
+            matrix = matrix_for_unit(raw_matrix, self._selected_unit)
             ip, port, _ = self._connection_settings()
             packet_settings = self._packet_settings()
-            status = self._send_matrix_udp(matrix, ip, port, packet_settings)
+            status = self._send_matrix_udp(
+                matrix, ip, port, packet_settings, raw_matrix=raw_matrix
+            )
             self.status.set(status)
-            self.draw_matrix(matrix, self.side.get())
+            side = self.side.get()
+            self.last_raw_matrices[side] = [row[:] for row in raw_matrix]
+            self.draw_matrix(matrix, side, self._selected_unit)
         except (ValueError, OSError) as exc:
             messagebox.showerror("Lỗi", str(exc))
 
-    def _send_matrix_udp(self, matrix, ip, port, packet_settings):
+    def _send_matrix_udp(
+        self,
+        matrix,
+        ip,
+        port,
+        packet_settings,
+        hardware_marker=None,
+        raw_matrix=None,
+    ):
         matrix = validate_matrix(matrix)
         device_id, side, unit = packet_settings
         with self.send_lock:
-            packet = build_packet(device_id, side, unit, self.sequence, matrix)
+            packet = build_packet(
+                device_id,
+                side,
+                unit,
+                self.sequence,
+                matrix,
+                hardware_marker=hardware_marker,
+                raw_matrix=raw_matrix,
+            )
             encoded = json.dumps(packet, separators=(",", ":")).encode("utf-8")
             if len(encoded) > 60000:
                 raise ValueError("Gói tin quá lớn")
@@ -544,6 +700,7 @@ class FSRTransmitterApp:
 
         self.running = True
         self.smoothed_matrices.clear()
+        self.last_raw_matrices.clear()
         self.detected_sides.clear()
         self.frame_counts = {1: 0, 2: 0}
         self.active_channels = {settings[0] for settings in serial_settings_list}
@@ -600,6 +757,7 @@ class FSRTransmitterApp:
         last_ui_time = 0.0
         buffer_tokens = []
         detected_side = None
+        detected_marker = None
         ser = None
 
         try:
@@ -620,8 +778,9 @@ class FSRTransmitterApp:
                     if open_attempt == 2 or not self.running:
                         raise
                     time.sleep(1.0)
-            ser.dtr = True
-            ser.rts = True
+            # Bluetooth SPP does not need modem-control toggles. Some Windows
+            # drivers disconnect briefly when DTR/RTS is forced, which looked
+            # like the COM number was jumping between reconnect attempts.
             time.sleep(0.3)
 
             with self.serial_lock:
@@ -648,7 +807,8 @@ class FSRTransmitterApp:
 
                 if tokens[0].upper() in ("RR", "LL"):
                     raw_module = tokens[0].upper()
-                    detected_side = "right" if raw_module == "RR" else "left"
+                    detected_marker = raw_module
+                    detected_side = "left" if raw_module == "RR" else "right"
                     buffer_tokens = tokens[1:]
                     self.root.after(
                         0, self._on_module_detected, channel_id, raw_module, device
@@ -657,6 +817,8 @@ class FSRTransmitterApp:
                     buffer_tokens.extend(tokens)
 
                 target_count = (rows * columns) if (rows and columns) else 48
+                if len(buffer_tokens) > target_count * 8:
+                    buffer_tokens = buffer_tokens[-target_count * 2:]
                 if len(buffer_tokens) < target_count:
                     continue
 
@@ -668,9 +830,12 @@ class FSRTransmitterApp:
                     matrix, frame_side = parse_hardware_frame(
                         values, active_side, rows, columns
                     )
-                    matrix = self._apply_ema_filter(channel_id, matrix)
+                    raw_matrix = self._apply_ema_filter(channel_id, matrix)
+                    selected_unit = self._selected_unit
+                    matrix = matrix_for_unit(raw_matrix, selected_unit)
+                    self.last_raw_matrices[frame_side] = [row[:] for row in raw_matrix]
                     current_packet_settings = (
-                        packet_settings[0], frame_side, packet_settings[2]
+                        packet_settings[0], frame_side, selected_unit
                     )
                 except (ValueError, TypeError) as exc:
                     self.root.after(
@@ -681,15 +846,18 @@ class FSRTransmitterApp:
                     continue
 
                 now = time.monotonic()
-                remaining = min_period - (now - last_send_time)
-                if remaining > 0:
-                    time.sleep(remaining)
-
-                status = self._send_matrix_udp(
-                    matrix, ip, port, current_packet_settings
-                )
-                last_send_time = time.monotonic()
                 self.frame_counts[channel_id] += 1
+
+                if now - last_send_time >= min_period:
+                    status = self._send_matrix_udp(
+                        matrix,
+                        ip,
+                        port,
+                        current_packet_settings,
+                        hardware_marker=detected_marker,
+                        raw_matrix=raw_matrix,
+                    )
+                    last_send_time = now
 
                 if now - last_ui_time >= 0.04:
                     self.root.after(
@@ -698,6 +866,7 @@ class FSRTransmitterApp:
                         channel_id,
                         frame_side,
                         matrix,
+                        selected_unit,
                         status,
                     )
                     last_ui_time = now
@@ -725,7 +894,7 @@ class FSRTransmitterApp:
         self.status.set(f"Đã mở {device}; đang chờ dữ liệu")
 
     def _on_module_detected(self, channel_id, raw_module, device):
-        side = "right" if raw_module == "RR" else "left"
+        side = "left" if raw_module == "RR" else "right"
         self.detected_sides[channel_id] = side
         side_label = "Chân phải" if side == "right" else "Chân trái"
         self._channel_status_var(channel_id).set(f"{device}: {raw_module} - {side_label}")
@@ -733,8 +902,9 @@ class FSRTransmitterApp:
         labels = []
         for current_channel in sorted(self.detected_sides):
             current_side = self.detected_sides[current_channel]
-            code = "RR" if current_side == "right" else "LL"
-            labels.append(f"FSR {current_channel}: {code}")
+            code = "RR" if current_side == "left" else "LL"
+            side_text = "TRÁI" if current_side == "left" else "PHẢI"
+            labels.append(f"FSR {current_channel}: {code} ({side_text})")
         duplicate = len(self.detected_sides) > 1 and len(set(self.detected_sides.values())) < len(
             self.detected_sides
         )
@@ -742,14 +912,14 @@ class FSRTransmitterApp:
         if duplicate:
             self.status.set("Cảnh báo: cả hai cổng đang gửi cùng LL hoặc cùng RR")
 
-    def _update_after_frame(self, channel_id, frame_side, matrix, status):
+    def _update_after_frame(self, channel_id, frame_side, matrix, unit, status):
         if not self.running:
             return
-        side_code = "LL" if frame_side == "left" else "RR"
+        side_code = "RR · TRÁI" if frame_side == "left" else "LL · PHẢI"
         count = self.frame_counts[channel_id]
         self._channel_status_var(channel_id).set(f"{side_code}: đã nhận {count} frame")
         self.status.set(status)
-        self.draw_matrix(matrix, frame_side)
+        self.draw_matrix(matrix, frame_side, unit)
 
     def _stream_failed(self, channel_id, device, error_message):
         self._channel_status_var(channel_id).set(f"{device}: l\u1ed7i m\u1edf c\u1ed5ng")
@@ -768,8 +938,10 @@ class FSRTransmitterApp:
             self.bt_button_text.set("Kết nối 2 FSR")
             self.status.set("Không còn cổng FSR nào đang chạy")
 
-    def draw_matrix(self, matrix, side=None):
+    def draw_matrix(self, matrix, side=None, unit=None):
         matrix = validate_matrix(matrix)
+        unit = unit or self._selected_unit
+        min_force, max_force = color_range_for_unit(unit)
         side = side if side in ("left", "right") else self.side.get()
         canvas = self.canvas_left if side == "left" else self.canvas_right
         summary = self.summary_left if side == "left" else self.summary_right
@@ -817,15 +989,19 @@ class FSRTransmitterApp:
         index = 0
         for row in matrix:
             for value in row:
-                canvas.itemconfig(state["rects"][index], fill=get_force_color(value))
+                canvas.itemconfig(
+                    state['rects'][index],
+                    fill=get_force_color(value, min_force, max_force),
+                )
                 if cell_width >= 20 and cell_height >= 14:
                     text_color = (
                         "#111827"
-                        if value >= (MIN_FORCE + MAX_FORCE) / 3
+                        if value >= (min_force + max_force) / 3
                         else "#ffffff"
                     )
+                    value_text = f'{value:.2f}' if unit == 'newton' else f'{value:g}'
                     canvas.itemconfig(
-                        state["texts"][index], text=f"{value:g}", fill=text_color
+                        state['texts'][index], text=value_text, fill=text_color
                     )
                 else:
                     canvas.itemconfig(state["texts"][index], text="")
@@ -835,7 +1011,8 @@ class FSRTransmitterApp:
         cop_text = "--" if cop_x is None else f"({cop_x:.2f}, {cop_y:.2f})"
         side_code = "LL" if side == "left" else "RR"
         summary.set(
-            f"{side_code} | {rows}×{columns} | Tổng: {total:.0f}\nCoP: {cop_text}"
+            f'{side_code} | {rows}×{columns} | Tổng: {total:.2f} '
+            f'{unit_label(unit)}\nCoP: {cop_text}'
         )
 
     def close(self):

@@ -20,21 +20,31 @@ class SessionProvider extends ChangeNotifier {
   Patient? _activePatient;
   GaitSession? _activeSession;
   int _activeTabIndex = 0;
+  int _referenceReplayRequest = 0;
   bool _isLoading = false;
   Timer? _recordTimer;
   bool _syncingRecordingStatus = false;
+  List<String> _lastRecordingWarnings = const [];
 
   List<Patient> get patients => _patients;
   Patient? get activePatient => _activePatient;
   GaitSession? get activeSession => _activeSession;
   int get activeTabIndex => _activeTabIndex;
+  int get referenceReplayRequest => _referenceReplayRequest;
   bool get isLoading => _isLoading;
+  List<String> get lastRecordingWarnings => _lastRecordingWarnings;
 
   // Backward compatible getter for existing widgets
   GaitSession get session => _activeSession ?? GaitSession();
 
   void setTabIndex(int index) {
     _activeTabIndex = index;
+    notifyListeners();
+  }
+
+  void openReferenceReplayInScan() {
+    _referenceReplayRequest += 1;
+    _activeTabIndex = 2;
     notifyListeners();
   }
 
@@ -108,6 +118,8 @@ class SessionProvider extends ChangeNotifier {
       age: json['age'] ?? 30,
       heightCm: (json['heightCm'] as num?)?.toDouble() ?? 170.0,
       weightKg: (json['weightKg'] as num?)?.toDouble() ?? 60.0,
+      leftLegLengthCm: (json['leftLegLengthCm'] as num?)?.toDouble(),
+      rightLegLengthCm: (json['rightLegLengthCm'] as num?)?.toDouble(),
       healthyLeg: json['healthyLeg'] == 'LEFT' ? LegSide.left : LegSide.right,
       prostheticLeg:
           json['prostheticLeg'] == 'LEFT' ? LegSide.left : LegSide.right,
@@ -140,6 +152,7 @@ class SessionProvider extends ChangeNotifier {
       phase: SessionPhase.analyze,
       isPracticeMode:
           json['isPracticeMode'] == 1 || json['isPracticeMode'] == true,
+      isReference: json['isReference'] == true || json['isReference'] == 1,
       baseline: json['baseline'] != null
           ? _parseScan(json['baseline'], 'baseline')
           : null,
@@ -209,7 +222,10 @@ class SessionProvider extends ChangeNotifier {
 
   Future<void> createPatient(String name, int age, double height, double weight,
       LegSide healthy, LegSide prosthetic,
-      {String injuryHistory = '', String treatmentGoals = ''}) async {
+      {double? leftLegLengthCm,
+      double? rightLegLengthCm,
+      String injuryHistory = '',
+      String treatmentGoals = ''}) async {
     _isLoading = true;
     notifyListeners();
     try {
@@ -218,6 +234,8 @@ class SessionProvider extends ChangeNotifier {
         "age": age,
         "heightCm": height,
         "weightKg": weight,
+        "leftLegLengthCm": leftLegLengthCm,
+        "rightLegLengthCm": rightLegLengthCm,
         "healthyLeg": healthy == LegSide.left ? "LEFT" : "RIGHT",
         "prostheticLeg": prosthetic == LegSide.left ? "LEFT" : "RIGHT",
         "injuryHistory": injuryHistory,
@@ -255,6 +273,8 @@ class SessionProvider extends ChangeNotifier {
       int age,
       double height,
       double weight,
+      double? leftLegLengthCm,
+      double? rightLegLengthCm,
       LegSide healthy,
       LegSide prosthetic,
       String injuryHistory,
@@ -267,6 +287,8 @@ class SessionProvider extends ChangeNotifier {
         "age": age,
         "heightCm": height,
         "weightKg": weight,
+        "leftLegLengthCm": leftLegLengthCm,
+        "rightLegLengthCm": rightLegLengthCm,
         "healthyLeg": healthy == LegSide.left ? "LEFT" : "RIGHT",
         "prostheticLeg": prosthetic == LegSide.left ? "LEFT" : "RIGHT",
         "injuryHistory": injuryHistory,
@@ -292,12 +314,18 @@ class SessionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startNewSession({bool isPracticeMode = false}) async {
+  Future<void> startNewSession({
+    bool isPracticeMode = false,
+    bool isReference = false,
+  }) async {
     if (_activePatient == null) return;
     _isLoading = true;
     notifyListeners();
     try {
-      final body = {"isPracticeMode": isPracticeMode};
+      final body = {
+        "isPracticeMode": isPracticeMode,
+        "isReference": isReference,
+      };
       final response = await http
           .post(
               Uri.parse(
@@ -580,11 +608,19 @@ class SessionProvider extends ChangeNotifier {
       final response = await http.post(Uri.parse(
         'http://127.0.0.1:8000/recording/start?session_id=${s.id}'
         '&healthy=${patient.healthyLeg.name.toUpperCase()}'
-        '&prosthetic=${patient.prostheticLeg.name.toUpperCase()}',
+        '&prosthetic=${patient.prostheticLeg.name.toUpperCase()}'
+        '&require_fsr=false',
       ));
       if (response.statusCode != 200) {
+        _lastRecordingWarnings = const [];
         return 'Kh\u00f4ng th\u1ec3 b\u1eaft \u0111\u1ea7u ghi: ${response.body}';
       }
+      final decoded = jsonDecode(response.body);
+      _lastRecordingWarnings = decoded is Map && decoded['warnings'] is List
+          ? (decoded['warnings'] as List)
+              .map((item) => item.toString())
+              .toList(growable: false)
+          : const [];
       s.isRecording = true;
       s.recordingElapsedSec = 0;
       s.playbackSec = 0;
@@ -596,6 +632,7 @@ class SessionProvider extends ChangeNotifier {
       notifyListeners();
       return null;
     } catch (error) {
+      _lastRecordingWarnings = const [];
       return 'Kh\u00f4ng nh\u1eadn \u0111\u01b0\u1ee3c ph\u1ea3n h\u1ed3i backend. H\u00e3y kh\u1edfi \u0111\u1ed9ng l\u1ea1i backend.';
     }
   }
@@ -653,6 +690,12 @@ class SessionProvider extends ChangeNotifier {
       if (response.statusCode != 200) {
         return 'Kh\u00f4ng th\u1ec3 d\u1eebng ghi: ${response.body}';
       }
+      final decoded = jsonDecode(response.body);
+      _lastRecordingWarnings = decoded is Map && decoded['warnings'] is List
+          ? (decoded['warnings'] as List)
+              .map((item) => item.toString())
+              .toList(growable: false)
+          : const [];
       await fetchPatients();
       final refreshedPatient =
           _patients.where((p) => p.id == _activePatient?.id).firstOrNull;
@@ -688,7 +731,7 @@ class SessionProvider extends ChangeNotifier {
         body: jsonEncode({
           'startOffsetSec': startSec,
           'endOffsetSec': endSec,
-          'scanType': 'segment',
+          'scanType': s.isReference ? 'reference_segment' : 'segment',
           'note': note,
         }),
       );

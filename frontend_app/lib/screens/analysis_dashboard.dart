@@ -1,9 +1,12 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:provider/provider.dart';
 
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_alert.dart';
+import '../widgets/smoothed_line_chart.dart';
 import '../widgets/tab_patients.dart';
 import '../widgets/tab_prepare_session.dart';
 import '../widgets/tab_scan.dart';
@@ -35,6 +38,92 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
 
   void _showBlockedMessage(BuildContext context, String message) {
     AppAlert.show(context, message, tone: AppAlertTone.error);
+  }
+
+  void _showSettingsDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final languageController = AppLanguageScope.controllerOf(dialogContext);
+        final language = languageController.language;
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Row(
+            children: [
+              Icon(Icons.settings_outlined, color: AppColors.accent),
+              SizedBox(width: 10),
+              Text('Cài đặt'),
+            ],
+          ),
+          content: SizedBox(
+            width: 430,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Ngôn ngữ giao diện',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Chọn ngôn ngữ sử dụng trong toàn bộ phần mềm.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<AppLanguage>(
+                    segments: const [
+                      ButtonSegment(
+                        value: AppLanguage.vietnamese,
+                        icon: Icon(Icons.language, size: 18),
+                        label: Text('Tiếng Việt'),
+                      ),
+                      ButtonSegment(
+                        value: AppLanguage.english,
+                        icon: Icon(Icons.translate, size: 18),
+                        label: Text('English'),
+                      ),
+                    ],
+                    selected: {language},
+                    showSelectedIcon: true,
+                    onSelectionChanged: (selection) {
+                      languageController.setLanguage(selection.first);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Thuật ngữ lâm sàng và cơ sinh học được giữ nhất quán.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Lựa chọn được lưu tự động.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('ĐÓNG'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _handleMenuSelection(
@@ -115,6 +204,8 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
           ],
         ),
       );
+    } else if (value == 10) {
+      _showSettingsDialog(context);
     }
   }
 
@@ -145,6 +236,7 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
       color: AppColors.panel,
       surfaceTintColor: Colors.transparent,
       offset: const Offset(0, 48),
+      constraints: const BoxConstraints(minWidth: 400, maxWidth: 460),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
@@ -259,6 +351,17 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
             ],
           ),
         ),
+        const PopupMenuItem(
+          value: 10,
+          child: Row(
+            children: [
+              Icon(Icons.settings_outlined,
+                  size: 18, color: AppColors.textSecondary),
+              SizedBox(width: 10),
+              Text('Cài đặt', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -306,7 +409,11 @@ class _AnalysisDashboardState extends State<AnalysisDashboard>
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Center(
-              child: _buildMenuButton(context, provider),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const ReportSmoothingSwitch(),
+                const SizedBox(width: 12),
+                _buildMenuButton(context, provider),
+              ]),
             ),
           ),
         ],

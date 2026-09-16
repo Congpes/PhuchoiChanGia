@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/localized_text.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/session_provider.dart';

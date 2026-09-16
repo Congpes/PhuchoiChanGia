@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from typing import Iterable
 
 INDEX_MAP_RIGHT = [
@@ -17,6 +18,8 @@ INDEX_MAP_RIGHT = [
     [41, 29, 17, 5],
     [42, 30, 18, 6],
 ]
+# Verified hardware convention: RR is worn on the physical left foot, whose
+# four sensor columns are mirrored. LL is worn on the physical right foot.
 INDEX_MAP_LEFT = [row[::-1] for row in INDEX_MAP_RIGHT]
 
 
@@ -35,6 +38,33 @@ class FsrSerialFrameParser:
     def __init__(self) -> None:
         self.side: str | None = None
         self.values: list[float] = []
+        self.pending_bytes = bytearray()
+        self.discard_until_newline = False
+        self.invalid_lines = 0
+
+    def feed_bytes(self, data: bytes) -> list[tuple[str, list[list[float]]]]:
+        """A serial timeout is not a line boundary; keep split numbers intact."""
+        frames = []
+        for chunk_index, chunk in enumerate(data.split(b'\n')):
+            if chunk_index:
+                if not self.discard_until_newline:
+                    try:
+                        line = self.pending_bytes.decode('ascii')
+                    except UnicodeDecodeError:
+                        self.invalid_lines += 1
+                        self.side, self.values = None, []
+                    else:
+                        frames.extend(self.feed_line(line))
+                self.pending_bytes.clear()
+                self.discard_until_newline = False
+            if not self.discard_until_newline:
+                self.pending_bytes.extend(chunk)
+                if len(self.pending_bytes) > 8192:
+                    self.pending_bytes.clear()
+                    self.discard_until_newline = True
+                    self.side, self.values = None, []
+                    self.invalid_lines += 1
+        return frames
 
     def feed_line(self, line: str) -> list[tuple[str, list[list[float]]]]:
         tokens = str(line).strip().split()
@@ -42,24 +72,44 @@ class FsrSerialFrameParser:
             return []
         marker = tokens[0].upper()
         if marker in ("LL", "RR"):
-            self.side = "left" if marker == "LL" else "right"
+            self.side = "left" if marker == "RR" else "right"
             self.values = []
             tokens = tokens[1:]
         elif self.side is None:
             return []
         try:
-            self.values.extend(float(token) for token in tokens)
+            numbers = [float(token) for token in tokens]
+            if not all(math.isfinite(value) for value in numbers):
+                raise ValueError('Non-finite FSR value')
+            self.values.extend(numbers)
         except ValueError:
+            self.invalid_lines += 1
             self.side = None
             self.values = []
             return []
         frames = []
-        if self.side is not None and len(self.values) >= 48:
+        # A Bluetooth module does not necessarily repeat LL/RR before every
+        # matrix. Keep the marker for this COM port and consume every complete
+        # 48-value frame so a continuous hardware stream is not lost after the
+        # first packet.
+        while self.side is not None and len(self.values) >= 48:
             frame_values = self.values[:48]
+            self.values = self.values[48:]
             frames.append((self.side, hardware_values_to_matrix(frame_values, self.side)))
-            self.side = None
-            self.values = []
         return frames
+
+
+def read_fsr_serial_chunk(connection) -> bytes:
+    """Drain queued bytes in batches; an empty timeout is NOT a port error.
+
+    Keep a bounded read size without purging samples. Actual OS/serial errors
+    propagate to the worker's reconnect handler.
+    """
+    return connection.read(max(1, min(4096, connection.in_waiting)))
+
+
+def serial_retry_delay(failures: int, initial: float, maximum: float) -> float:
+    return min(maximum, initial * (2.0 ** min(8, max(0, failures - 1))))
 
 
 def configured_serial_ports(port_infos: Iterable[object]) -> list[str]:

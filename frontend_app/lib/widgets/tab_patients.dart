@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+
+import '../l10n/app_language.dart';
+import '../l10n/localized_text.dart';
 import 'package:provider/provider.dart';
 
 import 'app_alert.dart';
@@ -18,6 +21,60 @@ class TabPatients extends StatelessWidget {
     );
   }
 
+  Future<void> _startReferenceCapture(
+    BuildContext context,
+    SessionProvider provider,
+  ) async {
+    final patient = provider.activePatient;
+    if (patient == null) {
+      AppAlert.show(
+        context,
+        'Hãy chọn hồ sơ người làm mẫu trước khi thu video tham chiếu.',
+        tone: AppAlertTone.error,
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Thu video mẫu tham chiếu'),
+        content: Text(
+          'Tạo phiên thu mẫu cho ${patient.name}?\n\n'
+          'Phiên này vẫn dùng đầy đủ số đo hồ sơ, chuẩn bị hai camera, '
+          'quay, cắt đoạn và phân tích như phiên thường.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('HỦY'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.video_call_outlined, size: 18),
+            label: const Text('TẠO PHIÊN MẪU'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await provider.startNewSession(isReference: true);
+      if (!context.mounted) return;
+      AppAlert.show(
+        context,
+        'Đã tạo phiên mẫu. Đang chuyển sang chuẩn bị camera.',
+        tone: AppAlertTone.success,
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      AppAlert.show(
+        context,
+        'Không tạo được phiên mẫu: $error',
+        tone: AppAlertTone.error,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<SessionProvider>();
@@ -33,6 +90,7 @@ class TabPatients extends StatelessWidget {
           patients: patients,
           activePatient: activePatient,
           onAddPressed: () => _showAddPatientDialog(context),
+          onReferencePressed: () => _startReferenceCapture(context, provider),
         ),
 
         // Right Column: Patient Detail & Clinical Actions
@@ -79,12 +137,14 @@ class _PatientListPanel extends StatefulWidget {
     required this.patients,
     required this.activePatient,
     required this.onAddPressed,
+    required this.onReferencePressed,
   });
 
   final SessionProvider provider;
   final List<Patient> patients;
   final Patient? activePatient;
   final VoidCallback onAddPressed;
+  final VoidCallback onReferencePressed;
 
   @override
   State<_PatientListPanel> createState() => _PatientListPanelState();
@@ -148,132 +208,151 @@ class _PatientListPanelState extends State<_PatientListPanel> {
       displayPatients = _getRecentPatients(widget.patients);
     }
 
-    return Container(
-      width: 320,
-      decoration: const BoxDecoration(
-        color: AppColors.sidebar,
-        border: Border(right: BorderSide(color: AppColors.border)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding:
-                const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Hồ sơ bệnh nhân',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+    return Material(
+      color: AppColors.sidebar,
+      child: Container(
+        width: 320,
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: AppColors.border)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(
+                  left: 16, right: 16, top: 16, bottom: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Hồ sơ bệnh nhân',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: 'Thêm bệnh án mới',
-                  style: IconButton.styleFrom(
-                    backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: context.tr('Thu video mẫu tham chiếu'),
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          AppColors.warning.withValues(alpha: 0.12),
+                    ),
+                    onPressed: widget.onReferencePressed,
+                    icon: const Icon(
+                      Icons.video_call_outlined,
+                      color: AppColors.warning,
+                      size: 20,
+                    ),
                   ),
-                  onPressed: widget.onAddPressed,
-                  icon: const Icon(Icons.add, color: AppColors.accent),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: TextFormField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Tìm kiếm bệnh nhân...',
-                prefixIcon: const Icon(Icons.search,
-                    size: 18, color: AppColors.textSecondary),
-                suffixIcon: isSearching
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 16),
-                        onPressed: () => _searchController.clear(),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      )
-                    : null,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: context.tr('Thêm bệnh án mới'),
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                    ),
+                    onPressed: widget.onAddPressed,
+                    icon: const Icon(Icons.add, color: AppColors.accent),
+                  ),
+                ],
               ),
             ),
-          ),
-          const Divider(height: 1),
-          if (widget.patients.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                isSearching
-                    ? 'Kết quả tìm thấy (${displayPatients.length})'
-                    : 'Bệnh nhân gần đây',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textSecondary,
-                  letterSpacing: 0.5,
+              child: TextFormField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: context.tr('Tìm kiếm bệnh nhân...'),
+                  prefixIcon: const Icon(Icons.search,
+                      size: 18, color: AppColors.textSecondary),
+                  suffixIcon: isSearching
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16),
+                          onPressed: () => _searchController.clear(),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        )
+                      : null,
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
             ),
-          Expanded(
-            child: widget.provider.isLoading && widget.patients.isEmpty
-                ? const Center(child: CircularProgressIndicator())
-                : displayPatients.isEmpty
-                    ? Center(
-                        child: Text(
-                          isSearching
-                              ? 'Không tìm thấy kết quả'
-                              : 'Chưa có bệnh nhân nào',
-                          style:
-                              const TextStyle(color: AppColors.textSecondary),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: displayPatients.length,
-                        separatorBuilder: (context, index) =>
-                            const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final p = displayPatients[index];
-                          final isSelected = widget.activePatient?.id == p.id;
-                          return ListTile(
-                            selected: isSelected,
-                            selectedTileColor:
-                                AppColors.accent.withValues(alpha: 0.1),
-                            title: Text(
-                              p.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            subtitle: Text(
-                              'ID: ${p.id} | ${p.age} tuổi | Chân giả: ${p.prostheticLeg == LegSide.left ? 'Trái' : 'Phải'}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            leading: CircleAvatar(
-                              backgroundColor: isSelected
-                                  ? AppColors.accent
-                                  : AppColors.panel,
-                              child: Icon(
-                                Icons.person,
-                                color: isSelected
-                                    ? AppColors.onAccent
-                                    : AppColors.textSecondary,
+            const Divider(height: 1),
+            if (widget.patients.isNotEmpty)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  isSearching
+                      ? 'Kết quả tìm thấy (${displayPatients.length})'
+                      : 'Bệnh nhân gần đây',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            Expanded(
+              child: widget.provider.isLoading && widget.patients.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : displayPatients.isEmpty
+                      ? Center(
+                          child: Text(
+                            isSearching
+                                ? 'Không tìm thấy kết quả'
+                                : 'Chưa có bệnh nhân nào',
+                            style:
+                                const TextStyle(color: AppColors.textSecondary),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: displayPatients.length,
+                          separatorBuilder: (context, index) =>
+                              const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final p = displayPatients[index];
+                            final isSelected = widget.activePatient?.id == p.id;
+                            return ListTile(
+                              selected: isSelected,
+                              selectedTileColor:
+                                  AppColors.accent.withValues(alpha: 0.1),
+                              title: Text(
+                                p.name,
+                                translate: false,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
                               ),
-                            ),
-                            onTap: () => widget.provider.selectPatient(p),
-                          );
-                        },
-                      ),
-          ),
-        ],
+                              subtitle: Text(
+                                'ID: ${p.id} | ${p.age} tuổi | Chân giả: ${p.prostheticLeg == LegSide.left ? 'Trái' : 'Phải'}',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              leading: CircleAvatar(
+                                backgroundColor: isSelected
+                                    ? AppColors.accent
+                                    : AppColors.panel,
+                                child: Icon(
+                                  Icons.person,
+                                  color: isSelected
+                                      ? AppColors.onAccent
+                                      : AppColors.textSecondary,
+                                ),
+                              ),
+                              onTap: () => widget.provider.selectPatient(p),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -311,6 +390,7 @@ class _PatientDetailCard extends StatelessWidget {
                   children: [
                     Text(
                       patient.name,
+                      translate: false,
                       style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -333,7 +413,7 @@ class _PatientDetailCard extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final double itemWidth = constraints.maxWidth > 600
-                  ? (constraints.maxWidth - 48) / 5
+                  ? (constraints.maxWidth - 72) / 7
                   : (constraints.maxWidth - 24) / 2;
               return Wrap(
                 spacing: 12,
@@ -350,6 +430,24 @@ class _PatientDetailCard extends StatelessWidget {
                       width: itemWidth,
                       child: _buildDetailItem(
                           'Cân nặng', '${patient.weightKg} kg')),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _buildDetailItem(
+                      'Dài chân trái',
+                      patient.leftLegLengthCm == null
+                          ? 'Chưa đo'
+                          : '${patient.leftLegLengthCm} cm',
+                    ),
+                  ),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _buildDetailItem(
+                      'Dài chân phải',
+                      patient.rightLegLengthCm == null
+                          ? 'Chưa đo'
+                          : '${patient.rightLegLengthCm} cm',
+                    ),
+                  ),
                   SizedBox(
                     width: itemWidth,
                     child: _buildDetailItem(
@@ -391,6 +489,7 @@ class _PatientDetailCard extends StatelessWidget {
             patient.injuryHistory.isNotEmpty
                 ? patient.injuryHistory
                 : 'Chưa có thông tin tiền sử bệnh lý.',
+            translate: patient.injuryHistory.isEmpty,
             style: const TextStyle(
                 fontSize: 14, color: AppColors.textSecondary, height: 1.4),
           ),
@@ -405,6 +504,7 @@ class _PatientDetailCard extends StatelessWidget {
             patient.treatmentGoals.isNotEmpty
                 ? patient.treatmentGoals
                 : 'Chưa có thông tin mục tiêu điều trị.',
+            translate: patient.treatmentGoals.isEmpty,
             style: const TextStyle(
                 fontSize: 14, color: AppColors.textSecondary, height: 1.4),
           ),
@@ -573,6 +673,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
   late final TextEditingController _ageController;
   late final TextEditingController _heightController;
   late final TextEditingController _weightController;
+  late final TextEditingController _leftLegController;
+  late final TextEditingController _rightLegController;
 
   LegSide _healthyLeg = LegSide.left;
   LegSide _prostheticLeg = LegSide.right;
@@ -585,6 +687,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
     _ageController = TextEditingController();
     _heightController = TextEditingController();
     _weightController = TextEditingController();
+    _leftLegController = TextEditingController();
+    _rightLegController = TextEditingController();
   }
 
   @override
@@ -593,6 +697,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
     _ageController.dispose();
     _heightController.dispose();
     _weightController.dispose();
+    _leftLegController.dispose();
+    _rightLegController.dispose();
     super.dispose();
   }
 
@@ -607,6 +713,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
     final age = int.parse(_ageController.text.trim());
     final height = double.parse(_heightController.text.trim());
     final weight = double.parse(_weightController.text.trim());
+    final leftLegLength = double.parse(_leftLegController.text.trim());
+    final rightLegLength = double.parse(_rightLegController.text.trim());
 
     try {
       final provider = context.read<SessionProvider>();
@@ -617,6 +725,8 @@ class AddPatientDialogState extends State<AddPatientDialog> {
         weight,
         _healthyLeg,
         _prostheticLeg,
+        leftLegLengthCm: leftLegLength,
+        rightLegLengthCm: rightLegLength,
       );
 
       if (!context.mounted) return;
@@ -674,13 +784,13 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Họ và tên bệnh nhân *',
                     hintText: 'Nhập họ tên đầy đủ',
-                  ),
+                  ).localized(context),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
-                      return 'Họ tên không được để trống';
+                      return context.tr('Họ tên không được để trống');
                     }
                     if (val.trim().length < 3) {
-                      return 'Tên quá ngắn (tối thiểu 3 ký tự)';
+                      return context.tr('Tên quá ngắn (tối thiểu 3 ký tự)');
                     }
                     return null;
                   },
@@ -695,15 +805,15 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                         decoration: const InputDecoration(
                           labelText: 'Tuổi *',
                           hintText: 'VD: 45',
-                        ),
+                        ).localized(context),
                         keyboardType: TextInputType.number,
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
-                            return 'Yêu cầu nhập tuổi';
+                            return context.tr('Yêu cầu nhập tuổi');
                           }
                           final parsed = int.tryParse(val.trim());
                           if (parsed == null || parsed <= 0 || parsed > 120) {
-                            return 'Tuổi từ 1 - 120';
+                            return context.tr('Tuổi từ 1 - 120');
                           }
                           return null;
                         },
@@ -716,16 +826,16 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                         decoration: const InputDecoration(
                           labelText: 'Chiều cao (cm) *',
                           hintText: 'VD: 172.5',
-                        ),
+                        ).localized(context),
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
-                            return 'Yêu cầu nhập chiều cao';
+                            return context.tr('Yêu cầu nhập chiều cao');
                           }
                           final parsed = double.tryParse(val.trim());
                           if (parsed == null || parsed < 30 || parsed > 250) {
-                            return 'Chiều cao 30 - 250 cm';
+                            return context.tr('Chiều cao 30 - 250 cm');
                           }
                           return null;
                         },
@@ -739,19 +849,59 @@ class AddPatientDialogState extends State<AddPatientDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Cân nặng (kg) *',
                     hintText: 'VD: 64.0',
-                  ),
+                  ).localized(context),
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
-                      return 'Yêu cầu nhập cân nặng';
+                      return context.tr('Yêu cầu nhập cân nặng');
                     }
                     final parsed = double.tryParse(val.trim());
                     if (parsed == null || parsed < 2 || parsed > 250) {
-                      return 'Cân nặng 2 - 250 kg';
+                      return context.tr('Cân nặng 2 - 250 kg');
                     }
                     return null;
                   },
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Số đo dùng để hiệu chuẩn camera',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _leftLegController,
+                        decoration: const InputDecoration(
+                          labelText: 'Dài chân trái (cm) *',
+                          hintText: 'Hông đến mắt cá',
+                        ).localized(context),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        validator: _validateLegLength,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _rightLegController,
+                        decoration: const InputDecoration(
+                          labelText: 'Dài chân phải (cm) *',
+                          hintText: 'Hông đến mắt cá',
+                        ).localized(context),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        validator: _validateLegLength,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
@@ -759,10 +909,16 @@ class AddPatientDialogState extends State<AddPatientDialog> {
 
                 // Dropdown chân lành sinh học
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Chân lành sinh học:',
-                        style: TextStyle(fontSize: 13)),
+                    const Expanded(
+                      child: Text(
+                        'Chân lành sinh học:',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     DropdownButton<LegSide>(
                       value: _healthyLeg,
                       dropdownColor: AppColors.panel,
@@ -790,10 +946,16 @@ class AddPatientDialogState extends State<AddPatientDialog> {
 
                 // Dropdown chân giả lắp đặt (Độc lập lựa chọn, có default tự động đề xuất)
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Chân giả lắp đặt:',
-                        style: TextStyle(fontSize: 13)),
+                    const Expanded(
+                      child: Text(
+                        'Chân giả lắp đặt:',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     DropdownButton<LegSide>(
                       value: _prostheticLeg,
                       dropdownColor: AppColors.panel,
@@ -852,5 +1014,14 @@ class AddPatientDialogState extends State<AddPatientDialog> {
               ),
       ],
     );
+  }
+
+  String? _validateLegLength(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Yêu cầu nhập số đo';
+    final parsed = double.tryParse(value.trim());
+    if (parsed == null || parsed < 20 || parsed > 150) {
+      return 'Chiều dài 20 - 150 cm';
+    }
+    return null;
   }
 }

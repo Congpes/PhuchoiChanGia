@@ -164,6 +164,7 @@ class GaitSession {
     this.recordingElapsedSec = 0,
     this.playbackSec = 0,
     this.isPracticeMode = false,
+    this.isReference = false,
   })  : createdAt = createdAt ?? DateTime.now(),
         scans = scans ?? [];
 
@@ -177,6 +178,7 @@ class GaitSession {
   double recordingElapsedSec;
   double playbackSec;
   bool isPracticeMode;
+  final bool isReference;
 
   // Backward compatibility getters
   ScanResult? get scan1 => scans.isNotEmpty ? scans.first : null;
@@ -209,6 +211,7 @@ class GaitSession {
     double? recordingElapsedSec,
     double? playbackSec,
     bool? isPracticeMode,
+    bool? isReference,
   }) {
     return GaitSession(
       id: id ?? this.id,
@@ -221,6 +224,7 @@ class GaitSession {
       recordingElapsedSec: recordingElapsedSec ?? this.recordingElapsedSec,
       playbackSec: playbackSec ?? this.playbackSec,
       isPracticeMode: isPracticeMode ?? this.isPracticeMode,
+      isReference: isReference ?? this.isReference,
     );
   }
 }
@@ -232,6 +236,8 @@ class Patient {
     required this.age,
     required this.heightCm,
     required this.weightKg,
+    this.leftLegLengthCm,
+    this.rightLegLengthCm,
     required this.healthyLeg,
     required this.prostheticLeg,
     this.injuryHistory = '',
@@ -245,6 +251,8 @@ class Patient {
   final int age;
   final double heightCm;
   final double weightKg;
+  final double? leftLegLengthCm;
+  final double? rightLegLengthCm;
   final LegSide healthyLeg;
   final LegSide prostheticLeg;
   final String injuryHistory;
@@ -258,6 +266,8 @@ class Patient {
     int? age,
     double? heightCm,
     double? weightKg,
+    double? leftLegLengthCm,
+    double? rightLegLengthCm,
     LegSide? healthyLeg,
     LegSide? prostheticLeg,
     String? injuryHistory,
@@ -271,6 +281,8 @@ class Patient {
       age: age ?? this.age,
       heightCm: heightCm ?? this.heightCm,
       weightKg: weightKg ?? this.weightKg,
+      leftLegLengthCm: leftLegLengthCm ?? this.leftLegLengthCm,
+      rightLegLengthCm: rightLegLengthCm ?? this.rightLegLengthCm,
       healthyLeg: healthyLeg ?? this.healthyLeg,
       prostheticLeg: prostheticLeg ?? this.prostheticLeg,
       injuryHistory: injuryHistory ?? this.injuryHistory,
