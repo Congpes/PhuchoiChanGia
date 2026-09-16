@@ -1,11 +1,6 @@
 # Python
 backend/venv/
 backend/.matplotlib/
-backend/test_*.py
-!backend/test_pose_angle_overlay.py
-!backend/test_step_events.py
-!backend/test_gait_cycle_pipeline.py
-!backend/test_fsr_step_pipeline.py
 __pycache__/
 backend/*.db
 backend/recordings/
