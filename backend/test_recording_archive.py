@@ -213,7 +213,13 @@ class RecordingArchiveTests(unittest.TestCase):
                 return route.endpoint
         raise AssertionError(f"Missing route {method} {path}")
 
-    def _exercise_serial_worker(self, *, actual_failure=False, processing_failure=False):
+    def _exercise_serial_worker(
+        self,
+        *,
+        actual_failure=False,
+        processing_failure=False,
+        unparseable_bytes=False,
+    ):
         import serial
         from serial.tools import list_ports
 
@@ -240,10 +246,13 @@ class RecordingArchiveTests(unittest.TestCase):
                 raise serial.SerialException('ReadFile failed: device disconnected')
             if reads[0] == 1:
                 return payload
+            if processing_failure:
+                state.running = False
+                return payload
             if not actual_failure and reads[0] <= 22:
                 # More than both former 3s and 8s disconnect thresholds.
                 observed.append(latest()['serialStatus']['portStatus']['COM_TEST'])
-                return b''
+                return b'broken-frame\n' if unparseable_bytes else b''
             state.running = False
             return payload
 
@@ -261,10 +270,11 @@ class RecordingArchiveTests(unittest.TestCase):
             mock.patch.object(list_ports, 'comports', return_value=[SimpleNamespace(
                 device='COM_TEST', description='Bluetooth serial', hwid='LOCALMFG&0002',
             )]),
-            mock.patch.dict(os.environ, {
-                'GAIT_RECORDINGS_DIR': self.recordings_dir.name,
-                'FSR_SERIAL_AUTO': 'true', 'FSR_SERIAL_PORTS': 'COM_TEST',
-            }),
+             mock.patch.dict(os.environ, {
+                 'GAIT_RECORDINGS_DIR': self.recordings_dir.name,
+                 'FSR_SERIAL_AUTO': 'true', 'FSR_SERIAL_PORTS': 'COM_TEST',
+                 'FSR_SERIAL_STALL_RECONNECT_SECONDS': '8',
+             }),
         ):
             realtime_services.install_realtime_services(app, state)
             latest = self._endpoint(app, '/fsr/latest', 'GET')
@@ -275,17 +285,29 @@ class RecordingArchiveTests(unittest.TestCase):
             result = latest()
             return result, observed, open_port.call_count, connection.close.call_count
 
-    def test_serial_silence_keeps_same_port_and_resumes_real_frames(self):
+    def test_serial_silence_reopens_port_and_resumes_real_frames(self):
         result, observed, opens, closes = self._exercise_serial_worker()
-        self.assertEqual(opens, 1)
-        self.assertEqual(closes, 1)  # Only at explicit worker shutdown.
+        self.assertGreaterEqual(opens, 2)
+        self.assertGreaterEqual(closes, 2)
         status = result['serialStatus']['portStatus']['COM_TEST']
         self.assertEqual(status['frameCount'], 2)
-        self.assertEqual(status['reconnectCount'], 0)
+        self.assertGreaterEqual(status['reconnectCount'], 1)
+        self.assertIn('No FSR data', status['lastDisconnectReason'])
         stalled = [item for item in observed if item['state'] == 'stalled']
         self.assertTrue(stalled)
         self.assertTrue(all(item['connected'] and not item['dataFresh'] for item in stalled))
         self.assertTrue(all(item['frameCount'] == 1 for item in observed))
+
+    def test_serial_unparseable_bytes_reopen_port_and_resume_real_frames(self):
+        result, _, opens, closes = self._exercise_serial_worker(
+            unparseable_bytes=True,
+        )
+        self.assertGreaterEqual(opens, 2)
+        self.assertGreaterEqual(closes, 2)
+        status = result['serialStatus']['portStatus']['COM_TEST']
+        self.assertEqual(status['frameCount'], 2)
+        self.assertGreaterEqual(status['reconnectCount'], 1)
+        self.assertIn('No valid FSR frame', status['lastDisconnectReason'])
 
     def test_performance_diagnostics_can_be_read_and_reset(self):
         app = FastAPI()

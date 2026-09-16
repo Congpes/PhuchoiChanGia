@@ -771,6 +771,7 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
     final provider = context.watch<SessionProvider>();
     final patient = provider.activePatient;
     final session = provider.activeSession;
+    final preparationIsActive = provider.activeTabIndex == 1;
 
     if (patient == null) {
       return Center(
@@ -961,6 +962,7 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           title: 'Góc chụp trước (Frontal Camera)',
                           streamUrl:
                               'http://localhost:8000/video_feed_0?raw=true',
+                          active: preparationIsActive,
                           connected: _camera0Connected,
                           poseDetected: _camera0PoseDetected,
                           captureFps: _camera0CaptureFps,
@@ -978,6 +980,7 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
                           title: 'Góc chụp ngang (Sagittal Camera)',
                           streamUrl:
                               'http://localhost:8000/video_feed_1?raw=true',
+                          active: preparationIsActive,
                           connected: _camera1Connected,
                           poseDetected: _camera1PoseDetected,
                           captureFps: _camera1CaptureFps,
@@ -1443,6 +1446,7 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
   Widget _buildCameraPreview({
     required String title,
     required String streamUrl,
+    required bool active,
     required bool connected,
     required bool poseDetected,
     required double captureFps,
@@ -1468,7 +1472,7 @@ class _TabPrepareSessionState extends State<TabPrepareSession> {
         children: [
           // Video Feed
           Positioned.fill(
-            child: connected
+            child: connected && active
                 ? createVideoStreamWidget(streamUrl)
                 : ColoredBox(
                     color: const Color(0xFF0B1220),

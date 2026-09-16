@@ -1945,6 +1945,10 @@ def install_realtime_services(app, state):
             retry_initial_seconds,
             float(os.getenv('FSR_SERIAL_RETRY_MAX_SECONDS', '5')),
         )
+        stall_reconnect_seconds = max(
+            2.0,
+            float(os.getenv('FSR_SERIAL_STALL_RECONNECT_SECONDS', '8')),
+        )
         parser = FsrSerialFrameParser()
         while getattr(state, 'running', True):
             connection = None
@@ -1978,8 +1982,9 @@ def install_realtime_services(app, state):
                         'state': 'waiting_data',
                         'connected': True,
                         'lastConnectedAt': time.time(),
-                        'reconnectOnSilence': False,
-                        'receiverVersion': 'persistent-stream-v4-diagnostics',
+                        'reconnectOnSilence': True,
+                        'stallReconnectSeconds': stall_reconnect_seconds,
+                        'receiverVersion': 'auto-reconnect-v5-diagnostics',
                         'dataFresh': False,
                         'dataGapSeconds': 0.0,
                         'nextRetrySeconds': 0.0,
@@ -2022,8 +2027,10 @@ def install_realtime_services(app, state):
                                     and data_gap < 2.0
                                 ),
                             })
-                        # Match the standalone transmitter: no bytes means
-                        # wait, not close/reopen an otherwise valid SPP handle.
+                        if data_gap >= stall_reconnect_seconds:
+                            raise serial.SerialException(
+                                f'No FSR data for {data_gap:.1f}s'
+                            )
                         continue
                     chunk_received_at = time.monotonic()
                     frames = parser.feed_bytes(raw_line)
@@ -2048,6 +2055,10 @@ def install_realtime_services(app, state):
                                 port_status['state'] = 'stalled'
                                 port_status['dataFresh'] = False
                                 stable_since = None
+                    if not frames and gap >= stall_reconnect_seconds:
+                        raise serial.SerialException(
+                            f'No valid FSR frame for {gap:.1f}s'
+                        )
                     for side, matrix in frames:
                         now = time.monotonic()
                         performance_monitor.record_fsr_frame(
