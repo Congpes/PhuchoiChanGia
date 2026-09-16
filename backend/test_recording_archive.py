@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 import database
 import realtime_services
+from performance_metrics import PerformanceMonitor
 
 
 class JsonSafetyTests(unittest.TestCase):
@@ -285,6 +286,128 @@ class RecordingArchiveTests(unittest.TestCase):
         self.assertTrue(stalled)
         self.assertTrue(all(item['connected'] and not item['dataFresh'] for item in stalled))
         self.assertTrue(all(item['frameCount'] == 1 for item in observed))
+
+    def test_performance_diagnostics_can_be_read_and_reset(self):
+        app = FastAPI()
+        state = self._state()
+        state.CAMERA_REQUEST_WIDTH = 1280
+        state.CAMERA_REQUEST_HEIGHT = 720
+        state.CAMERA_REQUEST_FPS = 20.0
+        state.camera_health_0 = {
+            "reportedWidth": 1280,
+            "reportedHeight": 720,
+            "reportedFps": 15.0,
+            "fourcc": "MJPG",
+        }
+        state.camera_health_1 = {
+            "reportedWidth": 640,
+            "reportedHeight": 480,
+            "reportedFps": 20.0,
+            "fourcc": "MJPG",
+        }
+        state.performance_monitor = PerformanceMonitor()
+        state.performance_monitor.record_stage(
+            "camera.0.read", 0.01, event_at=1.0
+        )
+        matrix = [[1.0, 2.0], [3.0, 4.0]]
+        state.performance_monitor.record_fsr_chunk(
+            "COM8", 100, received_at=1.0
+        )
+        state.performance_monitor.record_fsr_frame(
+            "left", matrix, "COM8", received_at=1.0
+        )
+        state.performance_monitor.record_fsr_chunk(
+            "COM8", 100, received_at=2.0
+        )
+        state.performance_monitor.record_fsr_frame(
+            "left", matrix, "COM8", received_at=2.0
+        )
+        with (
+            mock.patch.object(realtime_services.threading.Thread, "start"),
+            mock.patch.dict(
+                os.environ,
+                {"GAIT_RECORDINGS_DIR": self.recordings_dir.name},
+            ),
+        ):
+            realtime_services.install_realtime_services(app, state)
+
+        report = self._endpoint(app, "/diagnostics/performance", "GET")()
+        self.assertEqual(report["stages"]["camera.0.read"]["count"], 1)
+        self.assertEqual(report["runtimeConfiguration"]["fsrBaudrate"], 9600)
+        runtime = report["runtimeConfiguration"]
+        self.assertEqual(runtime["camera"]["requested"]["fps"], 20.0)
+        self.assertEqual(
+            runtime["camera"]["physical0Actual"]["reportedFps"], 15.0
+        )
+        self.assertEqual(
+            runtime["fsrProtocolHasSequence"],
+            {"serialDirect": False, "udpTransmitter": True},
+        )
+        uart = report["fsr"]["byPort"]["COM8"]["uartComparison"]
+        self.assertEqual(uart["usableWireBytesPerSecond"], 960.0)
+        self.assertAlmostEqual(uart["theoreticalMaxFrameRateHz"], 9.6)
+        self.assertFalse(uart["expectedRateFeasibleAtObservedFrameSize"])
+
+        reset = self._endpoint(app, "/diagnostics/performance/reset", "POST")()
+        self.assertEqual(reset["status"], "reset")
+        self.assertEqual(reset["report"]["stages"], {})
+
+    def test_udp_fsr_diagnostics_use_packet_sequence_and_source_timestamp(self):
+        app = FastAPI()
+        state = self._state()
+        workers = {}
+        now = time.time()
+        packets = [
+            json.dumps({
+                "type": "fsr_matrix",
+                "device_id": "udp-fsr-1",
+                "side": "left",
+                "unit": "raw_adc",
+                "sequence": sequence,
+                "timestamp_ms": int((now + index * 0.05) * 1000),
+                "values": [[100.0] * 4 for _ in range(12)],
+            }, separators=(",", ":")).encode("utf-8")
+            for index, sequence in enumerate((5, 7))
+        ]
+        fake_socket = mock.Mock()
+
+        def receive(_maximum):
+            payload = packets.pop(0)
+            if not packets:
+                state.running = False
+            return payload, ("127.0.0.1", 50000)
+
+        fake_socket.recvfrom.side_effect = receive
+
+        def capture_thread(thread):
+            workers[thread.name] = thread
+
+        with (
+            mock.patch.object(realtime_services.threading.Thread, "start", capture_thread),
+            mock.patch.object(realtime_services.socket, "socket", return_value=fake_socket),
+            mock.patch.dict(
+                os.environ,
+                {"GAIT_RECORDINGS_DIR": self.recordings_dir.name},
+            ),
+        ):
+            realtime_services.install_realtime_services(app, state)
+            state.running = True
+            workers["fsr-udp"].run()
+
+        report = self._endpoint(app, "/diagnostics/performance", "GET")()
+        left = report["fsr"]["bySide"]["left"]
+        source = report["fsr"]["bySource"]["udp:udp-fsr-1"]
+        self.assertIsNone(left["missingFrameMethod"])
+        self.assertIsNone(left["missingFrameCount"])
+        self.assertEqual(
+            left["missingFrameReason"],
+            "device_sequence_global_side_unknown",
+        )
+        self.assertEqual(source["transport"], "udp")
+        self.assertEqual(source["parsedFrameCount"], 2)
+        self.assertEqual(source["sequence"]["missing"], 1)
+        self.assertEqual(source["sequence"]["duplicate"], 0)
+        self.assertIsNotNone(left["lastSampledAtUnix"])
 
     def test_actual_serial_error_still_reopens_port(self):
         result, _, opens, closes = self._exercise_serial_worker(actual_failure=True)

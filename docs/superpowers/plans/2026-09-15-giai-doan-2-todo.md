@@ -88,7 +88,7 @@ MediaPipe legacy cho phép đánh đổi độ phức tạp mô hình và thời
 
 **Đầu ra:** bản kê cấu hình, bộ dữ liệu đối chứng, bảng hiệu năng ban đầu và tiêu chí đánh giá được chốt trước thử nghiệm tối ưu.
 
-- [ ] **Codex:** lập danh sách thay đổi và cách lưu mốc giai đoạn 1; xác định bản ứng dụng/cấu hình thực sự dùng để đo.
+- [x] **Codex:** lập danh sách thay đổi và cách lưu mốc giai đoạn 1; xác định bản ứng dụng/cấu hình thực sự dùng để đo.
 - [ ] **Bạn:** xác nhận loại/mã camera, cổng USB/cách cắm, mã mảng FSR, firmware đang nạp, hai chân thật hay có chân giả trong từng ca.
 - [ ] **Bạn:** xác nhận với kỹ thuật phép đo quả cân đã áp dụng cho từng ô, một ô đại diện hay tổng tấm; cung cấp bảng/hệ số nếu có, ý nghĩa scale 2.619 và trạng thái zero họ yêu cầu sau khi lắp đế.
 - [ ] **Cả hai:** chọn các ca cố định: đứng yên, đi thẳng thấy đủ hai chân, giao chân/che một chân, dừng–đi lại, mất camera và mất FSR có chủ đích.
@@ -96,6 +96,12 @@ MediaPipe legacy cho phép đánh đổi độ phức tạp mô hình và thời
 - [ ] **Codex:** đo tần số FSR thực từng chân, kích thước gói, gói thiếu/lặp, thời gian nhận. Đối chiếu 20 Hz trong báo cáo với đường truyền 9600 baud; xác minh tốc độ UART thực/đặc điểm Bluetooth trước khi kết luận nghẽn.
 - [ ] **Cả hai:** đánh dấu thủ công IC/TO trên video tham chiếu, kèm sai số do FPS và mức khó quan sát. Chọn một phần dữ liệu để chỉnh thuật toán và một phần độc lập để nghiệm thu.
 - [ ] **Cả hai:** ghi giới hạn chấp nhận cho sai số lực, góc, mốc sự kiện và tỉ lệ mẫu hợp lệ theo mục tiêu nghiên cứu, dụng cụ tham chiếu và số đo nền. Chốt trước khi chọn cấu hình thắng cuộc.
+
+> **Tiến độ 16/09/2026:** mốc giai đoạn 1 đã được lưu bằng Git. Công cụ đo
+> camera/pose/preview/ghi hình/CPU/RAM/FSR và hướng dẫn chạy 90 giây đã sẵn
+> sàng tại `backend/capture_performance_baseline.py` và
+> `docs/benchmarks/g2-00-huong-dan-do.md`. Hai checkbox đo hiệu năng vẫn để mở
+> cho tới khi chạy đủ ca trên camera, FSR và Bluetooth thật.
 
 **Xong khi:** có bộ ca tái lập và bảng số đo; mọi hạn chế chưa đo được được ghi rõ. Không lấy “nhìn có vẻ mượt” làm tiêu chí.
 

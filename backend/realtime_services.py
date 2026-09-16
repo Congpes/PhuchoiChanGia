@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import re
 import shutil
 import socket
@@ -33,6 +34,7 @@ from gait_cycle_pipeline import (
     estimate_step_motion_signals,
 )
 from pose_identity_lock import PoseIdentityLock
+from performance_metrics import PerformanceMonitor
 from phone_demo_library import install_phone_demo_library
 from measurement_smoothing import FsrMedianFilter
 from pose_angle_overlay import (
@@ -521,6 +523,12 @@ def install_realtime_services(app, state):
         'mode': 'serial_direct',
         'lastError': '',
     }
+    performance_monitor = getattr(state, "performance_monitor", None)
+    if performance_monitor is None:
+        performance_monitor = PerformanceMonitor(
+            expected_fsr_hz=float(os.getenv("FSR_EXPECTED_HZ", "20")),
+        )
+        setattr(state, "performance_monitor", performance_monitor)
     gait_cycle_lock = threading.Lock()
     gait_response_cache_lock = threading.Lock()
     gait_response_cache = {"key": None, "at": 0.0, "value": None}
@@ -1776,6 +1784,7 @@ def install_realtime_services(app, state):
         while getattr(state, "running", True):
             try:
                 raw, address = sock.recvfrom(65535)
+                received_monotonic = time.monotonic()
                 received_at = time.time()
                 packet = json.loads(raw.decode("utf-8"))
                 side = str(packet.get("side", "")).lower()
@@ -1811,6 +1820,31 @@ def install_realtime_services(app, state):
                 sample_regions = region_totals(force_matrix)
                 sampled_at, transport_latency_ms, timestamp_valid = packet_sample_time(
                     packet, received_at
+                )
+                udp_source = str(
+                    packet.get("device_id")
+                    or f"{address[0]}:{address[1]}"
+                )
+                performance_monitor.record_fsr_chunk(
+                    udp_source,
+                    len(raw),
+                    transport="udp",
+                    parsed_frame_count=1,
+                    received_at=received_monotonic,
+                )
+                performance_monitor.record_fsr_frame(
+                    side,
+                    packet_matrix,
+                    udp_source,
+                    transport="udp",
+                    sequence=packet.get("sequence"),
+                    received_at=received_monotonic,
+                    received_at_unix=received_at,
+                    sampled_at_unix=sampled_at,
+                    transport_latency_seconds=(
+                        transport_latency_ms / 1000.0
+                        if timestamp_valid else None
+                    ),
                 )
                 sample = {
                     "side": side,
@@ -1991,7 +2025,14 @@ def install_realtime_services(app, state):
                         # Match the standalone transmitter: no bytes means
                         # wait, not close/reopen an otherwise valid SPP handle.
                         continue
+                    chunk_received_at = time.monotonic()
                     frames = parser.feed_bytes(raw_line)
+                    performance_monitor.record_fsr_chunk(
+                        port,
+                        len(raw_line),
+                        parsed_frame_count=len(frames),
+                        received_at=chunk_received_at,
+                    )
                     with fsr_serial_status_lock:
                         port_status = fsr_serial_status['portStatus'].setdefault(port, {})
                         port_status['bytesReceived'] = int(port_status.get('bytesReceived', 0)) + len(raw_line)
@@ -2009,6 +2050,14 @@ def install_realtime_services(app, state):
                                 stable_since = None
                     for side, matrix in frames:
                         now = time.monotonic()
+                        performance_monitor.record_fsr_frame(
+                            side,
+                            matrix,
+                            port,
+                            batch_size=len(frames),
+                            received_at=now,
+                            received_at_unix=time.time(),
+                        )
                         if now - last_frame_at >= 2.0:
                             stable_since = None
                         last_frame_at = now
@@ -2324,7 +2373,20 @@ def install_realtime_services(app, state):
                             archive_frame_sizes.get(view, default_archive_size),
                         )
                         frame_index = archive_frame_counts[view]
+                        write_started = time.perf_counter()
                         writer.write(encoded_frame)
+                        write_completed = time.perf_counter()
+                        source_captured_ns = int(captured_ns.get(view) or 0)
+                        performance_monitor.record_stage(
+                            f"archive.{view}.write",
+                            write_completed - write_started,
+                            event_at=write_completed,
+                            latency_seconds=(
+                                write_completed
+                                - source_captured_ns / 1_000_000_000.0
+                                if source_captured_ns > 0 else None
+                            ),
+                        )
                         archive_frame_counts[view] += 1
                         archive_last_sequences[view] = sequence
                         if (
@@ -3215,6 +3277,133 @@ def install_realtime_services(app, state):
             for value in snapshot
             if now - float(value) <= float(window_seconds)
         )
+
+    def performance_report(*, sample_resources=True):
+        report = performance_monitor.snapshot(sample_resources=sample_resources)
+        fsr_baudrate = int(os.getenv("FSR_SERIAL_BAUDRATE", "9600"))
+        # UART 8N1 uses ten wire bits per payload byte (start + 8 data + stop).
+        # This is a capacity comparison only; Bluetooth buffering and firmware
+        # timing still need hardware validation before naming a bottleneck.
+        usable_wire_bytes_per_second = fsr_baudrate / 10.0
+        for port_status in report["fsr"]["byPort"].values():
+            average_frame_bytes = port_status.get("averageWireBytesPerFrame")
+            observed_bytes_per_second = port_status.get("wireBytesPerSecond")
+            theoretical_rate = (
+                usable_wire_bytes_per_second / average_frame_bytes
+                if average_frame_bytes else None
+            )
+            utilization = (
+                observed_bytes_per_second / usable_wire_bytes_per_second * 100.0
+                if usable_wire_bytes_per_second > 0.0
+                and observed_bytes_per_second is not None else None
+            )
+            port_status["uartComparison"] = {
+                "baudrate": fsr_baudrate,
+                "framingAssumption": "8N1_10_wire_bits_per_byte",
+                "usableWireBytesPerSecond": round(
+                    usable_wire_bytes_per_second, 3
+                ),
+                "theoreticalMaxFrameRateHz": (
+                    round(theoretical_rate, 3)
+                    if theoretical_rate is not None else None
+                ),
+                "observedWireUtilizationPercent": (
+                    round(utilization, 3) if utilization is not None else None
+                ),
+                "expectedRateFeasibleAtObservedFrameSize": (
+                    theoretical_rate >= performance_monitor.expected_fsr_hz
+                    if theoretical_rate is not None else None
+                ),
+                "interpretation": (
+                    "capacity_estimate_not_bottleneck_conclusion_validate_uart_bluetooth"
+                ),
+            }
+        with state.camera_roles_lock:
+            camera_roles_swapped = bool(
+                getattr(state, "camera_roles_swapped", False)
+            )
+        with lock:
+            active_archive = bool(archive_active)
+            current_archive_fps = float(archive_recording_fps)
+        health_0 = dict(getattr(state, "camera_health_0", {}) or {})
+        health_1 = dict(getattr(state, "camera_health_1", {}) or {})
+        serial_snapshot = serial_status_snapshot()
+        observed_transports = sorted({
+            source.get("transport")
+            for source in report["fsr"]["bySource"].values()
+            if source.get("transport")
+        })
+        report["runtimeConfiguration"] = {
+            "platform": platform.platform(),
+            "pythonVersion": platform.python_version(),
+            "logicalCpuCount": performance_monitor.logical_cpu_count,
+            "cameraWidth": getattr(state, "CAMERA_REQUEST_WIDTH", None),
+            "cameraHeight": getattr(state, "CAMERA_REQUEST_HEIGHT", None),
+            "cameraRequestedFps": getattr(state, "CAMERA_REQUEST_FPS", None),
+            "poseInputWidth": getattr(state, "POSE_INPUT_WIDTH", None),
+            "poseTargetFps": getattr(state, "POSE_TARGET_FPS", None),
+            "poseModelComplexity": getattr(state, "POSE_MODEL_COMPLEXITY", None),
+            "previewWidth": getattr(state, "STREAM_MAX_WIDTH", None),
+            "previewTargetFps": getattr(state, "STREAM_TARGET_FPS", None),
+            "previewJpegQuality": getattr(state, "STREAM_JPEG_QUALITY", None),
+            "archiveTargetFps": current_archive_fps,
+            "archiveMaxFps": archive_fps,
+            "fsrBaudrate": fsr_baudrate,
+            "fsrExpectedRateHz": performance_monitor.expected_fsr_hz,
+            "fsrProtocolHasSequence": {
+                "serialDirect": False,
+                "udpTransmitter": True,
+            },
+            "camera": {
+                "requested": {
+                    "width": getattr(state, "CAMERA_REQUEST_WIDTH", None),
+                    "height": getattr(state, "CAMERA_REQUEST_HEIGHT", None),
+                    "fps": getattr(state, "CAMERA_REQUEST_FPS", None),
+                },
+                "physical0Actual": health_0,
+                "physical1Actual": health_1,
+                "frontalIndex": getattr(state, "CAMERA_FRONTAL_INDEX", None),
+                "sagittalIndex": getattr(state, "CAMERA_SAGITTAL_INDEX", None),
+                "singleCameraMode": bool(
+                    getattr(state, "SINGLE_CAMERA_MODE", False)
+                ),
+                "rolesSwapped": camera_roles_swapped,
+            },
+            "recording": {
+                "active": active_archive,
+                "currentArchiveFps": current_archive_fps,
+                "maximumArchiveFps": archive_fps,
+                "frameSizes": dict(archive_frame_sizes),
+            },
+            "fsr": {
+                "observedTransports": observed_transports,
+                "udpPort": int(os.getenv("FSR_UDP_PORT", "8765")),
+                "serialMode": serial_snapshot.get("mode"),
+                "serialConfiguredPorts": serial_snapshot.get("ports", []),
+                "serialConnectedPorts": serial_snapshot.get(
+                    "connectedPorts", []
+                ),
+                "serialPortStatus": serial_snapshot.get("portStatus", {}),
+                "serialBaudrate": fsr_baudrate,
+            },
+            "previewMeasurement": {
+                "rateMeaning": "successful_encode_operations_across_connected_clients",
+                "runWithOneClientPerViewForPerPreviewFps": True,
+            },
+        }
+        return report
+
+    @app.get("/diagnostics/performance")
+    def get_performance_report():
+        return performance_report()
+
+    @app.post("/diagnostics/performance/reset")
+    def reset_performance_report():
+        performance_monitor.reset()
+        return {
+            "status": "reset",
+            "report": performance_report(sample_resources=False),
+        }
 
     @app.get("/camera-status")
     def get_camera_status():

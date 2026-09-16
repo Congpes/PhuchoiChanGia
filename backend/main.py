@@ -25,6 +25,7 @@ from camera_fusion import (
     sagittal_fallback_sample,
 )
 from pose_identity_lock import PoseIdentityLock
+from performance_metrics import PerformanceMonitor
 from pose_angle_overlay import draw_joint_angle_labels
 from pose_quality import assess_pose_sample, assess_temporal_consistency
 from stereo_calibration import StereoCalibrationError, StereoCalibrationManager
@@ -79,6 +80,9 @@ CAMERA_REQUEST_HEIGHT = min(1080, max(240, int(os.getenv('CAMERA_HEIGHT', '720')
 # enough temporal detail for walking, while leaving CPU for both pose models
 # and JPEG preview. The profile negotiator can still fall back to native 30/15.
 CAMERA_REQUEST_FPS = min(60.0, max(10.0, float(os.getenv('CAMERA_REQUEST_FPS', '20'))))
+performance_monitor = PerformanceMonitor(
+    expected_fsr_hz=float(os.getenv("FSR_EXPECTED_HZ", "20")),
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -989,7 +993,9 @@ def camera_capture_loop_0():
     camera_health_0.update({"readFailures": 0, "reconnects": 0})
     print("[Camera 0] capture thread started.")
     while running and not camera_stop_event.is_set():
+        read_started = time.perf_counter()
         success, frame = cap.read()
+        read_completed = time.perf_counter()
         if not success:
             read_failures += 1
             camera_health_0["readFailures"] = read_failures
@@ -1006,6 +1012,11 @@ def camera_capture_loop_0():
                 camera_health_0.update(capture_properties(cap))
             time.sleep(0.03)
             continue
+        performance_monitor.record_stage(
+            "camera.0.read",
+            read_completed - read_started,
+            event_at=read_completed,
+        )
         read_failures = 0
         captured_ns = time.perf_counter_ns()
         frame_at = time.time()
@@ -1058,10 +1069,20 @@ def camera_loop_0():
         h, w, _ = frame.shape
         pose_frame = prepare_pose_frame(frame, missed_pose_frames)
         rgb = cv2.cvtColor(pose_frame, cv2.COLOR_BGR2RGB)
+        pose_process_started = time.perf_counter()
         try:
             results = pose.process(rgb)
             consecutive_pose_errors = 0
         except Exception as exc:
+            pose_process_completed = time.perf_counter()
+            performance_monitor.record_stage(
+                "camera.0.pose_inference",
+                pose_process_completed - pose_process_started,
+                event_at=pose_process_completed,
+                latency_seconds=(
+                    pose_process_completed - captured_ns / 1_000_000_000.0
+                ),
+            )
             record_camera_error(camera_health_0, "pose_inference", exc)
             consecutive_pose_errors += 1
             if consecutive_pose_errors >= 3:
@@ -1071,6 +1092,15 @@ def camera_loop_0():
                 consecutive_pose_errors = 0
             camera_stop_event.wait(0.05)
             continue
+        pose_process_completed = time.perf_counter()
+        performance_monitor.record_stage(
+            "camera.0.pose_inference",
+            pose_process_completed - pose_process_started,
+            event_at=pose_process_completed,
+            latency_seconds=(
+                pose_process_completed - captured_ns / 1_000_000_000.0
+            ),
+        )
         pose_inference_times_0.append(time.time())
         missed_pose_frames = 0 if results.pose_landmarks else missed_pose_frames + 1
         
@@ -1160,7 +1190,9 @@ def camera_capture_loop_1():
     camera_health_1.update({"readFailures": 0, "reconnects": 0})
     print("[Camera 1] capture thread started.")
     while running and not camera_stop_event.is_set():
+        read_started = time.perf_counter()
         success, frame = cap.read()
+        read_completed = time.perf_counter()
         if not success:
             read_failures += 1
             camera_health_1["readFailures"] = read_failures
@@ -1177,6 +1209,11 @@ def camera_capture_loop_1():
                 camera_health_1.update(capture_properties(cap))
             time.sleep(0.05)
             continue
+        performance_monitor.record_stage(
+            "camera.1.read",
+            read_completed - read_started,
+            event_at=read_completed,
+        )
         read_failures = 0
         captured_ns = time.perf_counter_ns()
         frame_at = time.time()
@@ -1230,10 +1267,20 @@ def camera_loop_1():
         h, w, _ = frame.shape
         pose_frame = prepare_pose_frame(frame, missed_pose_frames)
         rgb = cv2.cvtColor(pose_frame, cv2.COLOR_BGR2RGB)
+        pose_process_started = time.perf_counter()
         try:
             results = pose.process(rgb)
             consecutive_pose_errors = 0
         except Exception as exc:
+            pose_process_completed = time.perf_counter()
+            performance_monitor.record_stage(
+                "camera.1.pose_inference",
+                pose_process_completed - pose_process_started,
+                event_at=pose_process_completed,
+                latency_seconds=(
+                    pose_process_completed - captured_ns / 1_000_000_000.0
+                ),
+            )
             record_camera_error(camera_health_1, "pose_inference", exc)
             consecutive_pose_errors += 1
             if consecutive_pose_errors >= 3:
@@ -1243,6 +1290,15 @@ def camera_loop_1():
                 consecutive_pose_errors = 0
             camera_stop_event.wait(0.05)
             continue
+        pose_process_completed = time.perf_counter()
+        performance_monitor.record_stage(
+            "camera.1.pose_inference",
+            pose_process_completed - pose_process_started,
+            event_at=pose_process_completed,
+            latency_seconds=(
+                pose_process_completed - captured_ns / 1_000_000_000.0
+            ),
+        )
         pose_inference_times_1.append(time.time())
         missed_pose_frames = 0 if results.pose_landmarks else missed_pose_frames + 1
         
@@ -1487,6 +1543,7 @@ def gen_frames(camera_index, *, raw=False):
         if frame_to_send is None or frame_ns <= last_frame_ns:
             time.sleep(0.005)
             continue
+        jpeg_started = time.perf_counter()
         ret, jpeg = cv2.imencode(
             '.jpg',
             (
@@ -1510,9 +1567,16 @@ def gen_frames(camera_index, *, raw=False):
             ),
             [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY],
         )
+        jpeg_completed = time.perf_counter()
         if not ret:
             time.sleep(0.01)
             continue
+        performance_monitor.record_stage(
+            f"preview.camera{camera_index}.{'raw' if raw else 'processed'}",
+            jpeg_completed - jpeg_started,
+            event_at=jpeg_completed,
+            latency_seconds=(jpeg_completed - frame_ns / 1_000_000_000.0),
+        )
         last_frame_ns = frame_ns
         # Advance from the previous deadline so JPEG encoding time is part of
         # the frame budget. Scheduling a fresh full interval after encoding
