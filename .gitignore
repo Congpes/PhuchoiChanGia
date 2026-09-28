@@ -45,3 +45,4 @@ docx_work/
 *.bat
 !chay_backend.bat
 !chay_frontend_nhanh.bat
+!chay_fsr_hieu_chinh_phai.bat

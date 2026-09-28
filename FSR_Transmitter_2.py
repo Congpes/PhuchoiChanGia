@@ -1,4 +1,5 @@
 import json
+import argparse
 import math
 import queue
 import re
@@ -57,6 +58,7 @@ except (ImportError, ModuleNotFoundError):
         return force_values, "N_estimated", "formula_estimate"
 
 DEFAULT_TARGET_IP = "127.0.0.1"
+CELL_CALIBRATION = None  # Opt-in only, for the measured right specimen.
 DEFAULT_TARGET_PORT = 8765
 DEFAULT_SEND_RATE_HZ = 20
 DEFAULT_BAUDRATE = 9600
@@ -155,11 +157,15 @@ def unit_label(unit):
     }.get(str(unit).strip().lower(), 'ADC thô')
 
 
-def matrix_for_unit(raw_adc_matrix, unit):
+def matrix_for_unit(raw_adc_matrix, unit, side=None, profile=None):
     '''Convert raw ADC values to the unit selected for preview and UDP.'''
     raw_adc_matrix = validate_matrix(raw_adc_matrix)
     if str(unit).strip().lower() == 'newton':
         force_matrix, _, _ = matrix_to_newton(raw_adc_matrix, 'raw_adc')
+        selected_profile = profile if profile is not None else CELL_CALIBRATION
+        if selected_profile is not None and side == selected_profile.get('side'):
+            from backend.fsr_force import apply_cell_calibration
+            return apply_cell_calibration(force_matrix, side, selected_profile)
         return force_matrix
     return [row[:] for row in raw_adc_matrix]
 
@@ -586,13 +592,13 @@ class FSRTransmitterApp:
         )
         for side, raw_matrix in list(self.last_raw_matrices.items()):
             self.draw_matrix(
-                matrix_for_unit(raw_matrix, self._selected_unit),
+                matrix_for_unit(raw_matrix, self._selected_unit, side),
                 side,
                 self._selected_unit,
             )
             self._append_chart_sample(
                 side,
-                matrix_for_unit(raw_matrix, self._selected_unit),
+                matrix_for_unit(raw_matrix, self._selected_unit, side),
                 unit=self._selected_unit,
             )
         if self.last_raw_matrices:
@@ -958,6 +964,14 @@ class FSRTransmitterApp:
                 "raw_values": raw_matrix,
                 "filtered_raw_values": filtered_raw_matrix,
                 "values": display_matrix,
+                "calibration_id": (
+                    CELL_CALIBRATION['id'] if CELL_CALIBRATION is not None
+                    and side == 'right' and unit == 'newton' else None
+                ),
+                "calibration_status": (
+                    CELL_CALIBRATION['status'] if CELL_CALIBRATION is not None
+                    and side == 'right' and unit == 'newton' else None
+                ),
             }
             try:
                 handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -1273,7 +1287,7 @@ class FSRTransmitterApp:
         try:
             side = self.side.get()
             raw_matrix = self._manual_matrix()
-            matrix = matrix_for_unit(raw_matrix, self._selected_unit)
+            matrix = matrix_for_unit(raw_matrix, self._selected_unit, side)
             self.last_raw_matrices[side] = [row[:] for row in raw_matrix]
             self.draw_matrix(
                 matrix,
@@ -1287,7 +1301,7 @@ class FSRTransmitterApp:
     def send_manual_once(self):
         try:
             raw_matrix = self._manual_matrix()
-            matrix = matrix_for_unit(raw_matrix, self._selected_unit)
+            matrix = matrix_for_unit(raw_matrix, self._selected_unit, self.side.get())
             ip, port, _ = self._connection_settings()
             packet_settings = self._packet_settings()
             status = self._send_matrix_udp(matrix, ip, port, packet_settings)
@@ -1476,7 +1490,7 @@ class FSRTransmitterApp:
                     incoming_raw_matrix = [row[:] for row in matrix]
                     raw_matrix = self._apply_ema_filter(channel_id, matrix)
                     selected_unit = self._selected_unit
-                    matrix = matrix_for_unit(raw_matrix, selected_unit)
+                    matrix = matrix_for_unit(raw_matrix, selected_unit, frame_side)
                     self.last_raw_matrices[frame_side] = [row[:] for row in raw_matrix]
                     current_packet_settings = (
                         packet_settings[0], frame_side, selected_unit
@@ -1691,6 +1705,26 @@ class FSRTransmitterApp:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='FSR transmitter; calibration is opt-in per specimen.')
+    parser.add_argument('--right-calibration', type=Path)
+    args = parser.parse_args()
+    if args.right_calibration:
+        from backend.fsr_force import apply_cell_calibration
+        with args.right_calibration.open(encoding='utf-8') as handle:
+            CELL_CALIBRATION = json.load(handle)
+        if (CELL_CALIBRATION.get('version') != 1 or CELL_CALIBRATION.get('side') != 'right'
+                or not CELL_CALIBRATION.get('id') or not CELL_CALIBRATION.get('status')):
+            raise ValueError('Unsupported right calibration profile')
+        apply_cell_calibration([[0.0]*4 for _ in range(12)], 'right', CELL_CALIBRATION)
     window = tk.Tk()
     app = FSRTransmitterApp(window)
+    if CELL_CALIBRATION:
+        pending = [(r+1, c+1) for r, row in enumerate(CELL_CALIBRATION['cells'])
+                   for c, cell in enumerate(row) if cell is None]
+        window.title(window.title() + ' | CHÂN PHẢI: HIỆU CHỈNH THỬ 14,4 N')
+        messagebox.showinfo('Hiệu chỉnh sơ bộ chân phải',
+                            'Chỉ dùng với đúng miếng chân phải đã đo và cùng cách lắp.\n'
+                            'Chọn Newton để áp dụng. ADC và chân trái giữ nguyên.\n'
+                            'Chưa kiểm chứng toàn dải lực; chưa zero khi lắp giày.\n'
+                            f'Các ô (hàng, cột) CHƯA hiệu chỉnh: {pending}')
     window.mainloop()

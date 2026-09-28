@@ -3,6 +3,30 @@
 from __future__ import annotations
 
 from typing import Iterable
+import math
+
+
+def apply_cell_calibration(matrix, side, profile=None):
+    """Apply a specimen-specific, one-point profile to legacy Newton estimates.
+
+    Missing cells stay uncalibrated. Never use on raw ADC or already corrected
+    packets. This does not claim full-range accuracy or perform live shoe tare.
+    """
+    values = [list(map(float, row)) for row in matrix]
+    if profile is None or side != profile.get('side'):
+        return values
+    cells = profile.get('cells', [])
+    if len(cells) != len(values) or any(len(c) != len(v) for c, v in zip(cells, values)):
+        raise ValueError('Calibration shape does not match matrix')
+    for row, parameters in zip(values, cells):
+        for column, cell in enumerate(parameters):
+            if cell is None:
+                continue
+            baseline, gain = float(cell['baseline_n']), float(cell['gain'])
+            if not math.isfinite(baseline) or baseline < 0 or not math.isfinite(gain) or gain <= 0:
+                raise ValueError('Invalid cell calibration parameters')
+            row[column] = max(0.0, row[column] - baseline) * gain
+    return values
 
 
 def analog_to_weight_smooth(adc: float) -> float:
