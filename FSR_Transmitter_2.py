@@ -58,7 +58,70 @@ except (ImportError, ModuleNotFoundError):
         return force_values, "N_estimated", "formula_estimate"
 
 DEFAULT_TARGET_IP = "127.0.0.1"
-CELL_CALIBRATIONS = {}  # Opt-in, one profile per measured specimen/side.
+# Specimen-specific experimental calibration. NOT validated full-range force.
+# Old 85 cells retained; 11 retested cells fit median of per-placement medians.
+# Retest baseline: elapsed 8–25s; windows trim first 2s and last 1s of >4N runs.
+# Retest source SHA256: fa6d70f994d9893835e4e2fa3963e37ac63c57d7a71f5b40dc2be7d566ba2f5c
+BUILTIN_CELL_CALIBRATIONS = {
+    'right': {
+        'version': 1,
+        'id': "right-20260928-repeat-median-v2",
+        'side': "right",
+        'status': "provisional_single_point_not_validated",
+        'cells': [
+            [{"baseline_n":0.5430203073875562,"gain":1.8013744974704866},{"baseline_n":0.5270696104787869,"gain":1.564884242034935},{"baseline_n":0.4839518626325734,"gain":1.5675683237163553},{"baseline_n":0.5434151153546811,"gain":1.6008665557551043}],
+            [{"baseline_n":0.26570412789584275,"gain":1.3603235524351602},{"baseline_n":0.5905929718897815,"gain":1.1660506137019246},{"baseline_n":0.6940988165033128,"gain":1.1232186763109593},{"baseline_n":0.728401844311139,"gain":1.4677557058745}],
+            [{"baseline_n":0.49955472296195863,"gain":1.3569836015003485},{"baseline_n":0.6721615393219712,"gain":1.1273455058423436},{"baseline_n":0.6678919481743208,"gain":1.1299192465070786},{"baseline_n":0.7671502706009586,"gain":1.1269080197942116}],
+            [{"baseline_n":0.5181801332351436,"gain":1.3118674464354878},{"baseline_n":0.561591285443074,"gain":1.39535164968139},{"baseline_n":0.7047692372828768,"gain":0.9196655950333367},{"baseline_n":0.5423607896696118,"gain":1.1076027023753994}],
+            [{"baseline_n":0.4846638466278961,"gain":1.046033111176853},{"baseline_n":0.5319404463860747,"gain":1.5316153146532927},{"baseline_n":0.5133557746012489,"gain":0.8643267473097201},{"baseline_n":0.5768396217016878,"gain":0.9018983748087714}],
+            [{"baseline_n":0.4618621634481451,"gain":1.237275849522209},{"baseline_n":0.6736356082049602,"gain":0.9830445271228363},{"baseline_n":0.7194774980498975,"gain":1.2358393827655232},{"baseline_n":0.7173010386474274,"gain":0.9986097961597793}],
+            [{"baseline_n":0.36255170304822415,"gain":1.2286019581624001},{"baseline_n":0.30830691040810343,"gain":1.2271102332121395},{"baseline_n":0.5907326446104195,"gain":1.1440729094919235},{"baseline_n":0.6625523393594691,"gain":0.9578127419575424}],
+            [{"baseline_n":0.3969327862705283,"gain":1.250727630230439},{"baseline_n":0.5788256517653116,"gain":1.159123817826331},{"baseline_n":0.6473372872191471,"gain":1.1494744758015447},{"baseline_n":0.6941028146859205,"gain":1.141373477151277}],
+            [{"baseline_n":0.45882628342558396,"gain":0.9785493092987164},{"baseline_n":0.5074731083692766,"gain":1.3436421880460516},{"baseline_n":0.6298149822299066,"gain":1.1282433342895721},{"baseline_n":0.5090087825049349,"gain":1.1407255899069726}],
+            [{"baseline_n":0.5095629528286183,"gain":1.3539094542531194},{"baseline_n":0.6181493517247665,"gain":1.0407702287439655},{"baseline_n":0.6700779511275171,"gain":1.4900730614199158},{"baseline_n":0.6268323898517693,"gain":1.1777344578778153}],
+            [{"baseline_n":0.41288389127063196,"gain":1.2954490088242783},{"baseline_n":0.5284537118455944,"gain":1.4234374250491602},{"baseline_n":0.8262914943962365,"gain":1.2576707270313392},{"baseline_n":0.8250167150100495,"gain":1.4953846236339419}],
+            [{"baseline_n":0.47875750065882877,"gain":1.4332826326492871},{"baseline_n":0.6050177654872857,"gain":1.270663606196705},{"baseline_n":0.44600001639512393,"gain":1.2546366643795694},{"baseline_n":0.5809428208348044,"gain":1.3735846659920514}],
+        ],
+    },
+    'left': {
+        'version': 1,
+        'id': "left-20260928-repeat-median-v2",
+        'side': "left",
+        'status': "provisional_single_point_not_validated",
+        'cells': [
+            [{"baseline_n":0.6747425939608492,"gain":2.2015896767379872},{"baseline_n":0.7293564252340441,"gain":1.870214316689304},{"baseline_n":0.9092848676350717,"gain":1.4917295000762558},{"baseline_n":0.7814698458101734,"gain":1.5386909517927039}],
+            [{"baseline_n":0.7514151531921152,"gain":1.075874329175584},{"baseline_n":0.7156104030547352,"gain":1.4161544979147653},{"baseline_n":0.7432409188690317,"gain":1.5726115225135602},{"baseline_n":0.6598197633364733,"gain":1.5606816095650975}],
+            [{"baseline_n":0.7792955572390036,"gain":1.290963330204433},{"baseline_n":0.7752298515643177,"gain":1.41868070963739},{"baseline_n":0.7490703797951669,"gain":1.6660799426394477},{"baseline_n":0.6795122597733931,"gain":1.3160971569399258}],
+            [{"baseline_n":0.7746726305287819,"gain":1.077748305930369},{"baseline_n":1.6285659696224144,"gain":1.2281289813811367},{"baseline_n":0.9601863947424305,"gain":1.0765353523175751},{"baseline_n":0.6670238016332709,"gain":1.4377994112449306}],
+            [{"baseline_n":0.7522853860380336,"gain":1.322559166995866},{"baseline_n":0.7328249780304796,"gain":0.9664212188101504},{"baseline_n":0.7194898408532964,"gain":1.1482205497527311},{"baseline_n":0.7334759295766622,"gain":1.3948443179957803}],
+            [{"baseline_n":0.7790283866260328,"gain":1.1600315877932428},{"baseline_n":0.8050897091232136,"gain":1.2735109880224953},{"baseline_n":0.7134501222002907,"gain":1.2669196232691864},{"baseline_n":0.6572089427145351,"gain":1.3015426673607335}],
+            [{"baseline_n":0.7228875582295817,"gain":1.1259507192260358},{"baseline_n":0.7095040457169591,"gain":1.3437847460808445},{"baseline_n":0.6822353087969032,"gain":1.5348804358770227},{"baseline_n":0.723991406968182,"gain":1.1988830056350632}],
+            [{"baseline_n":0.7354589971085301,"gain":1.4507465239211834},{"baseline_n":0.8727116147288391,"gain":1.5020899536900616},{"baseline_n":0.7403439562692353,"gain":1.0780095521738848},{"baseline_n":1.2377455978654868,"gain":1.350456628883831}],
+            [{"baseline_n":0.7885064732080234,"gain":1.3045739959593095},{"baseline_n":0.7453282179088803,"gain":1.261561849667097},{"baseline_n":0.6500113634464999,"gain":1.1374369468231464},{"baseline_n":0.6170607176872606,"gain":1.2274979324014361}],
+            [{"baseline_n":0.7919427355127138,"gain":1.1877269170641123},{"baseline_n":0.7414806932906217,"gain":1.0616803390853882},{"baseline_n":0.7275988959147199,"gain":1.1345616139053516},{"baseline_n":0.7242314554132802,"gain":1.2868168535148774}],
+            [{"baseline_n":0.7999246867226895,"gain":1.510591029137182},{"baseline_n":0.792103751688313,"gain":1.469825934956434},{"baseline_n":0.9983579123462586,"gain":1.1186534301311135},{"baseline_n":1.1311767021202301,"gain":1.1735022893328924}],
+            [{"baseline_n":0.7553508713397734,"gain":1.3003324665777165},{"baseline_n":0.8922631851296361,"gain":1.2793985252416855},{"baseline_n":0.8083502046752187,"gain":1.3331189301577855},{"baseline_n":0.6532643421449854,"gain":1.2764652277242219}],
+        ],
+    },
+}
+RETEST_CALIBRATION_AUDIT = {
+    'right': [
+        {"row":1,"column":1,"windows_s":[[33.406,39.203],[44.015,46.422],[65.25,69.234],[83.328,86.531]],"trial_medians_n":[8.038301111204364,8.476684935679167,9.362187401587416,8.592886277775207],"corrected_range_n":[13.501807691375685,15.886622692422526]},
+        {"row":1,"column":2,"windows_s":[[54.75,58.547],[76.125,78.14],[92.703,100.531],[105.093,107.937],[113.64,120.875]],"trial_medians_n":[11.302577593674616,10.329852690235672,8.562316701416488,8.97379721471808,9.726575754958587],"corrected_range_n":[12.574231553465461,16.862422642824797]},
+        {"row":2,"column":4,"windows_s":[[127.453,137.968],[145.453,151.922],[158.453,161.062],[165.218,174.656]],"trial_medians_n":[8.290727307639491,11.637122408121316,10.253391743286961,10.819976394556999],"corrected_range_n":[11.099646348480212,16.01133685132288]},
+        {"row":4,"column":2,"windows_s":[[180.968,186.218],[203.562,210.703],[226.593,238.656]],"trial_medians_n":[13.060180667211565,9.753676692331588,10.878820066651862],"corrected_range_n":[12.82619153651412,17.43992731254097]},
+        {"row":4,"column":3,"windows_s":[[191.265,198.203],[215.922,221.187],[243.453,256.109]],"trial_medians_n":[15.304606495178763,16.937998777099533,16.358461489930598],"corrected_range_n":[13.4269680191727,14.929142704048221]},
+        {"row":5,"column":4,"windows_s":[[261.75,269.453],[276.359,285.5],[292.156,300.703],[309.484,327.5],[339.343,356.515]],"trial_medians_n":[16.538906526470644,14.354452015477417,16.38304782294074,17.956320721117045,17.61319539551387],"corrected_range_n":[12.426006226691518,15.674525758582472]},
+        {"row":10,"column":3,"windows_s":[[365.484,373.047],[393.906,398.39],[439.172,443.781],[457.437,462.875]],"trial_medians_n":[10.661414219323756,9.919694816316706,11.852681627826172,10.001501851861056],"corrected_range_n":[13.782604919273739,16.662896495183972]},
+        {"row":10,"column":4,"windows_s":[[378.125,383.109],[448.547,452.922],[467.328,473.765]],"trial_medians_n":[13.696783952695487,12.259961513939263,12.850438571792603],"corrected_range_n":[13.700737022379808,15.39293231835505]},
+    ],
+    'left': [
+        {"row":1,"column":1,"windows_s":[[481.078,488.515],[506.218,515.453],[533.578,546.359]],"trial_medians_n":[7.213727742787607,6.922017886387136,7.394752658861412],"corrected_range_n":[13.753936791546003,14.79470478646045]},
+        {"row":1,"column":3,"windows_s":[[493.922,501.047],[520.531,527.531],[551.422,572.922]],"trial_medians_n":[10.559936811746976,10.267004081401904,11.54252168634013],"corrected_range_n":[13.959185804606372,15.861913043759335]},
+        {"row":11,"column":2,"windows_s":[[580.062,594.859],[602.531,608.531],[622.328,632.047],[642.547,650.937],[662.328,674.312]],"trial_medians_n":[9.641150793692146,12.319712934570607,10.586571149235427,11.063144770537374,9.696329598548708],"corrected_range_n":[13.006558841986752,16.943578945042344]},
+    ],
+}
+CELL_CALIBRATIONS = BUILTIN_CELL_CALIBRATIONS
 DEFAULT_TARGET_PORT = 8765
 DEFAULT_SEND_RATE_HZ = 20
 DEFAULT_BAUDRATE = 9600
@@ -1706,10 +1769,16 @@ class FSRTransmitterApp:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='FSR transmitter; calibration is opt-in per specimen.')
+    parser = argparse.ArgumentParser(description='FSR transmitter; built-in experimental profiles for the measured pair.')
+    parser.add_argument('--no-calibration', action='store_true', help='Use original force formula without cell correction')
     parser.add_argument('--right-calibration', type=Path)
     parser.add_argument('--left-calibration', type=Path)
     args = parser.parse_args()
+    if args.no_calibration:
+        CELL_CALIBRATIONS = {}
+    elif args.right_calibration or args.left_calibration:
+        # Explicit profile flags retain their original opt-in semantics.
+        CELL_CALIBRATIONS = {}
     for side, profile_path in (('right', args.right_calibration), ('left', args.left_calibration)):
         if profile_path is None:
             continue
@@ -1735,5 +1804,7 @@ if __name__ == "__main__":
                             'Chỉ dùng với đúng các miếng đã đo và cùng cách lắp.\n'
                             'Chọn Newton để áp dụng. ADC và bên không nạp profile giữ nguyên.\n'
                             'Chưa kiểm chứng toàn dải lực; chưa zero khi lắp giày.\n'
+                            '11 ô đo lại đã bù trung vị; độ lặp vẫn chưa ổn định.\n'
+                            'Mở với --no-calibration để trở về công thức cũ.\n'
                             + '\n'.join(notes))
     window.mainloop()

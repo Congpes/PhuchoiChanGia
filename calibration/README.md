@@ -1,5 +1,23 @@
 # Hiệu chỉnh thử từng ô hai chân — 28/09/2026
 
+## Cập nhật sau log đo lại
+
+Mở trực tiếp `FSR_Transmitter_2.py`, chọn Newton: bộ hệ số hai chân đã được
+nhúng vào file, không cần nạp JSON hay dùng file chạy riêng. `--no-calibration`
+tắt hiệu chỉnh. File chạy hai chân cũ cũng dùng bộ nhúng mới; file chạy chỉ chân
+phải vẫn nạp profile cũ nếu cần đối chiếu.
+
+85 ô cũ giữ nguyên. 11 ô còn lại bù theo trung vị của các trung vị từng lượt
+đặt riêng 1468 g trong `hiệu chỉnh 2 chân.jsonl`; nền lấy giây 8–25. Khoảng đo,
+giá trị từng lượt và SHA nguồn lưu ngay trong `RETEST_CALIBRATION_AUDIT` và
+chú thích trong transmitter. Không nhân hệ số lần hai vào Newton đã hiệu chỉnh.
+
+Đã có hệ số thử cho 96 ô, KHÔNG có nghĩa 96 ô đạt chuẩn: các trung vị từng lượt
+sau bù vẫn khoảng 11,10–17,44 N cho cùng quả 1468 g. Nền cũ không phải zero trong
+giày. Cần kiểm chứng độc lập, nhất là phải H1C2, H2C4, H4C2, H5C4 và trái H11C2.
+
+Các phần bên dưới mô tả bộ profile v1 và quy trình ban đầu, được giữ để truy vết.
+
 ## Cách chạy
 
 Đóng cửa sổ transmitter cũ để giải phóng cổng COM, mở

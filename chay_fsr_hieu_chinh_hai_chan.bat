@@ -5,5 +5,5 @@ if not exist "backend\venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-"backend\venv\Scripts\python.exe" FSR_Transmitter_2.py --right-calibration calibration/right-20260928-provisional.json --left-calibration calibration/left-20260928-provisional.json
+"backend\venv\Scripts\python.exe" FSR_Transmitter_2.py
 pause

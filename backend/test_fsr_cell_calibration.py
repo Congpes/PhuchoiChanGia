@@ -8,6 +8,23 @@ import FSR_Transmitter_2 as transmitter
 
 
 class CellCalibrationTests(unittest.TestCase):
+    def test_builtin_profiles_cover_both_feet_and_can_be_disabled(self):
+        self.assertTrue(hasattr(transmitter, 'BUILTIN_CELL_CALIBRATIONS'))
+        profiles = transmitter.BUILTIN_CELL_CALIBRATIONS
+        for side in ('left', 'right'):
+            self.assertEqual(len(profiles[side]['cells']), 12)
+            self.assertTrue(all(len(row) == 4 and all(cell is not None for cell in row)
+                                for row in profiles[side]['cells']))
+        self.assertIs(transmitter.CELL_CALIBRATIONS, profiles)
+        old = transmitter.CELL_CALIBRATIONS
+        try:
+            transmitter.CELL_CALIBRATIONS = {}
+            raw = [[200.0]*4 for _ in range(12)]
+            self.assertEqual(transmitter.matrix_for_unit(raw, 'newton', 'left'),
+                             transmitter.matrix_for_unit(raw, 'newton'))
+        finally:
+            transmitter.CELL_CALIBRATIONS = old
+
     def test_active_profiles_are_selected_by_side_without_cross_application(self):
         self.assertTrue(hasattr(transmitter, 'CELL_CALIBRATIONS'))
         old = transmitter.CELL_CALIBRATIONS
