@@ -29,19 +29,20 @@ WINDOWS = [
 ]
 
 
-def main():
+def main(side='right', source_name='chân phải log.jsonl', windows=WINDOWS,
+         expected_sha='d2439c9e64b5fb95dbf7ba319381c6ec7e385dc7ccf58dccaa76373fd924c1a6'):
     root = Path(__file__).resolve().parents[1]
-    source = root / 'fsr_logs' / 'chân phải log.jsonl'
+    source = root / 'fsr_logs' / source_name
     samples = []
     digest = hashlib.sha256()
     with source.open('rb') as handle:
         for line in handle:
             digest.update(line)
             record = json.loads(line)
-            if record.get('type') == 'fsr_sample' and record.get('side') == 'right':
+            if record.get('type') == 'fsr_sample' and record.get('side') == side:
                 raw = record['filtered_raw_values']
                 samples.append((record['elapsed'], [adc_to_newton(x) for row in raw for x in row]))
-    if digest.hexdigest() != 'd2439c9e64b5fb95dbf7ba319381c6ec7e385dc7ccf58dccaa76373fd924c1a6':
+    if digest.hexdigest() != expected_sha:
         raise ValueError('Source log changed: these reviewed windows must not be reused on another capture')
     def segment(k, start, end):
         return [v[k] for t, v in samples if start <= t < end]
@@ -50,7 +51,7 @@ def main():
     nominal_stacked = target + 0.3333 * 9.80665
     for k in range(48):
         baseline = median(segment(k, 1, 6))
-        w = WINDOWS[k // 4][k % 4]
+        w = windows[k // 4][k % 4]
         entry = {'row': k // 4 + 1, 'column': k % 4 + 1, 'baseline_n': baseline, 'windows_s': w}
         cell = None
         if w is None:
@@ -73,12 +74,12 @@ def main():
         cells.append(cell)
         entry['enabled'] = cell is not None
         audit.append(entry)
-    profile = {'version': 1, 'id': 'right-20260928-provisional', 'side': 'right',
+    profile = {'version': 1, 'id': f'{side}-20260928-provisional', 'side': side,
                'status': 'provisional_single_point_not_validated', 'source_sha256': digest.hexdigest(),
                'target_n': target, 'baseline_window_s': [1, 6],
-               'warning': 'Only original right specimen and original mounting. Null cells remain legacy. Not shoe tare.',
+               'warning': f'Only original {side} specimen and original mounting. Null cells remain legacy. Not shoe tare.',
                'cells': [cells[i:i+4] for i in range(0,48,4)], 'audit': audit}
-    output = root / 'calibration' / 'right-20260928-provisional.json'
+    output = root / 'calibration' / f'{side}-20260928-provisional.json'
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(profile, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     for e in audit:

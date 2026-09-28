@@ -8,6 +8,38 @@ import FSR_Transmitter_2 as transmitter
 
 
 class CellCalibrationTests(unittest.TestCase):
+    def test_active_profiles_are_selected_by_side_without_cross_application(self):
+        self.assertTrue(hasattr(transmitter, 'CELL_CALIBRATIONS'))
+        old = transmitter.CELL_CALIBRATIONS
+        raw = [[200.0] * 4 for _ in range(12)]
+        legacy = transmitter.matrix_for_unit(raw, 'newton')[0][0]
+        try:
+            transmitter.CELL_CALIBRATIONS = {
+                'left': {'side': 'left', 'cells': [[{'baseline_n': 1, 'gain': 2}] * 4 for _ in range(12)]},
+                'right': {'side': 'right', 'cells': [[{'baseline_n': 2, 'gain': 3}] * 4 for _ in range(12)]},
+            }
+            self.assertAlmostEqual(transmitter.matrix_for_unit(raw, 'newton', 'left')[0][0], (legacy-1)*2)
+            self.assertAlmostEqual(transmitter.matrix_for_unit(raw, 'newton', 'right')[0][0], (legacy-2)*3)
+            self.assertEqual(transmitter.matrix_for_unit(raw, 'raw_adc', 'left'), raw)
+            self.assertEqual(transmitter.matrix_for_unit(raw, 'newton', None)[0][0], legacy)
+        finally:
+            transmitter.CELL_CALIBRATIONS = old
+
+    def test_log_provenance_uses_matching_side_and_only_newton(self):
+        self.assertTrue(hasattr(transmitter, 'calibration_metadata'))
+        old = transmitter.CELL_CALIBRATIONS
+        try:
+            transmitter.CELL_CALIBRATIONS = {
+                'left': {'id': 'left-test', 'status': 'trial'},
+                'right': {'id': 'right-test', 'status': 'trial'},
+            }
+            self.assertEqual(transmitter.calibration_metadata('left', 'newton'),
+                             {'calibration_id': 'left-test', 'calibration_status': 'trial'})
+            self.assertEqual(transmitter.calibration_metadata('right', 'newton')['calibration_id'], 'right-test')
+            self.assertIsNone(transmitter.calibration_metadata('left', 'raw_adc')['calibration_id'])
+        finally:
+            transmitter.CELL_CALIBRATIONS = old
+
     def test_transmitter_corrects_only_right_newton_not_adc_or_left(self):
         raw = [[200.0] * 4 for _ in range(12)]
         profile = {'side': 'right', 'cells': [[{'baseline_n': 1, 'gain': 2}] * 4 for _ in range(12)]}

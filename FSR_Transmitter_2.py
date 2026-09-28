@@ -58,7 +58,7 @@ except (ImportError, ModuleNotFoundError):
         return force_values, "N_estimated", "formula_estimate"
 
 DEFAULT_TARGET_IP = "127.0.0.1"
-CELL_CALIBRATION = None  # Opt-in only, for the measured right specimen.
+CELL_CALIBRATIONS = {}  # Opt-in, one profile per measured specimen/side.
 DEFAULT_TARGET_PORT = 8765
 DEFAULT_SEND_RATE_HZ = 20
 DEFAULT_BAUDRATE = 9600
@@ -157,12 +157,20 @@ def unit_label(unit):
     }.get(str(unit).strip().lower(), 'ADC thô')
 
 
+def calibration_metadata(side, unit):
+    profile = CELL_CALIBRATIONS.get(side) if unit == 'newton' else None
+    return {
+        'calibration_id': profile['id'] if profile else None,
+        'calibration_status': profile['status'] if profile else None,
+    }
+
+
 def matrix_for_unit(raw_adc_matrix, unit, side=None, profile=None):
     '''Convert raw ADC values to the unit selected for preview and UDP.'''
     raw_adc_matrix = validate_matrix(raw_adc_matrix)
     if str(unit).strip().lower() == 'newton':
         force_matrix, _, _ = matrix_to_newton(raw_adc_matrix, 'raw_adc')
-        selected_profile = profile if profile is not None else CELL_CALIBRATION
+        selected_profile = profile if profile is not None else CELL_CALIBRATIONS.get(side)
         if selected_profile is not None and side == selected_profile.get('side'):
             from backend.fsr_force import apply_cell_calibration
             return apply_cell_calibration(force_matrix, side, selected_profile)
@@ -964,14 +972,7 @@ class FSRTransmitterApp:
                 "raw_values": raw_matrix,
                 "filtered_raw_values": filtered_raw_matrix,
                 "values": display_matrix,
-                "calibration_id": (
-                    CELL_CALIBRATION['id'] if CELL_CALIBRATION is not None
-                    and side == 'right' and unit == 'newton' else None
-                ),
-                "calibration_status": (
-                    CELL_CALIBRATION['status'] if CELL_CALIBRATION is not None
-                    and side == 'right' and unit == 'newton' else None
-                ),
+                **calibration_metadata(side, unit),
             }
             try:
                 handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -1707,24 +1708,32 @@ class FSRTransmitterApp:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='FSR transmitter; calibration is opt-in per specimen.')
     parser.add_argument('--right-calibration', type=Path)
+    parser.add_argument('--left-calibration', type=Path)
     args = parser.parse_args()
-    if args.right_calibration:
+    for side, profile_path in (('right', args.right_calibration), ('left', args.left_calibration)):
+        if profile_path is None:
+            continue
         from backend.fsr_force import apply_cell_calibration
-        with args.right_calibration.open(encoding='utf-8') as handle:
-            CELL_CALIBRATION = json.load(handle)
-        if (CELL_CALIBRATION.get('version') != 1 or CELL_CALIBRATION.get('side') != 'right'
-                or not CELL_CALIBRATION.get('id') or not CELL_CALIBRATION.get('status')):
-            raise ValueError('Unsupported right calibration profile')
-        apply_cell_calibration([[0.0]*4 for _ in range(12)], 'right', CELL_CALIBRATION)
+        with profile_path.open(encoding='utf-8') as handle:
+            profile = json.load(handle)
+        if (profile.get('version') != 1 or profile.get('side') != side
+                or not profile.get('id') or not profile.get('status')):
+            raise ValueError(f'Unsupported {side} calibration profile')
+        apply_cell_calibration([[0.0]*4 for _ in range(12)], side, profile)
+        CELL_CALIBRATIONS[side] = profile
     window = tk.Tk()
     app = FSRTransmitterApp(window)
-    if CELL_CALIBRATION:
-        pending = [(r+1, c+1) for r, row in enumerate(CELL_CALIBRATION['cells'])
-                   for c, cell in enumerate(row) if cell is None]
-        window.title(window.title() + ' | CHÂN PHẢI: HIỆU CHỈNH THỬ 14,4 N')
-        messagebox.showinfo('Hiệu chỉnh sơ bộ chân phải',
-                            'Chỉ dùng với đúng miếng chân phải đã đo và cùng cách lắp.\n'
-                            'Chọn Newton để áp dụng. ADC và chân trái giữ nguyên.\n'
+    if CELL_CALIBRATIONS:
+        notes = []
+        for side, profile in CELL_CALIBRATIONS.items():
+            pending = [(r+1, c+1) for r, row in enumerate(profile['cells'])
+                       for c, cell in enumerate(row) if cell is None]
+            label = 'Phải' if side == 'right' else 'Trái'
+            notes.append(f'{label}: các ô (hàng, cột) CHƯA hiệu chỉnh: {pending}')
+        window.title(window.title() + ' | HIỆU CHỈNH THỬ 14,4 N: ' + ', '.join(CELL_CALIBRATIONS))
+        messagebox.showinfo('Hiệu chỉnh sơ bộ FSR',
+                            'Chỉ dùng với đúng các miếng đã đo và cùng cách lắp.\n'
+                            'Chọn Newton để áp dụng. ADC và bên không nạp profile giữ nguyên.\n'
                             'Chưa kiểm chứng toàn dải lực; chưa zero khi lắp giày.\n'
-                            f'Các ô (hàng, cột) CHƯA hiệu chỉnh: {pending}')
+                            + '\n'.join(notes))
     window.mainloop()

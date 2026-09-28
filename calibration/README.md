@@ -1,15 +1,17 @@
-# Hiệu chỉnh thử chân phải — 28/09/2026
+# Hiệu chỉnh thử từng ô hai chân — 28/09/2026
 
 ## Cách chạy
 
 Đóng cửa sổ transmitter cũ để giải phóng cổng COM, mở
-`chay_fsr_hieu_chinh_phai.bat` tại thư mục dự án, chọn đơn vị Newton.
-Đây là chế độ opt-in, chỉ dùng đúng miếng chân phải đã ghi log và cùng cách lắp.
+`chay_fsr_hieu_chinh_hai_chan.bat` tại thư mục dự án, chọn đơn vị Newton.
+Nếu chỉ muốn bật chân phải như trước, dùng `chay_fsr_hieu_chinh_phai.bat`.
+Đây là chế độ opt-in, chỉ dùng đúng hai miếng đã ghi log và cùng cách lắp.
 Chạy `FSR_Transmitter_2.py` bình thường không có tham số sẽ dùng công thức cũ.
-Không thay đổi chân trái, mapping, ADC thô hay log gốc. Không áp lại hệ số khi phát
+Hai profile chọn theo đúng bên; bên không nạp profile giữ nguyên. Không đổi
+mapping, ADC thô hay log gốc. Không áp lại hệ số khi phát
 lại log đã chứa Newton. Backend nhận Newton giữ nguyên giá trị gói tin.
 
-## Kết quả và giới hạn
+## Kết quả chân phải và giới hạn chung
 
 - Log nguồn: `fsr_logs/chân phải log.jsonl`, 26.942 mẫu chân phải, khoảng 22 phút 17 giây.
 - 40 ô có hệ số sơ bộ; 8 ô để `null`, vẫn dùng công thức cũ, KHÔNG coi đã chuẩn.
@@ -34,7 +36,7 @@ lại log đã chứa Newton. Backend nhận Newton giữ nguyên giá trị gó
   phân biệt được nguồn hiệu chỉnh thử. Khi kiểm chuẩn phải lưu log tại transmitter,
   không dùng kết quả thử làm kết luận lâm sàng.
 
-## 8 ô cần đo lại
+## 8 ô chân phải cần đo lại
 
 Đếm hàng từ trên xuống, cột từ trái sang phải trên bảng CHÂN PHẢI:
 
@@ -48,11 +50,32 @@ lại log đã chứa Newton. Backend nhận Newton giữ nguyên giá trị gó
 | 10 | 3 | Dịch tải/đặt lại và lực biến thiên |
 | 10 | 4 | Lực trôi liên tục, bậc thêm cân không rõ |
 
+## Kết quả chân trái
+
+- Log nguồn: `fsr_logs/chân trái log.jsonl`, 24.684 mẫu chân trái, khoảng 27 phút 21 giây.
+- Người đo xác nhận vẫn dùng cân cũ; mốc tính là 1468 g, đoạn chồng quả nhỏ
+  chỉ dùng sàng lọc danh định giống chân phải, không coi là mốc cân đã xác minh.
+- 45/48 ô có hệ số sơ bộ; 3 ô để `null`, vẫn dùng công thức cũ.
+- Nền riêng chân trái lấy trung vị giây 1–6 trong chính log chân trái.
+- Hệ số bù các ô bật thử khoảng 0,966–1,870; không sao chép từ chân phải.
+- Trung vị đoạn chồng cân sau bù của các ô bật thử khoảng 15,67–19,42 N,
+  chưa phải bằng chứng chính xác ở mức tải thứ hai.
+- Tổng hai bên: 85 ô bật thử, 11 ô chưa hiệu chỉnh. Chưa thể kết luận tổng lực đã chuẩn.
+
+Các ô CHÂN TRÁI cần đo lại (đếm trực tiếp theo bảng hiển thị, không tự đảo cột):
+
+| Hàng | Cột | Lý do |
+|---|---|---|
+| 1 | 1 | Đoạn đầu ngắn, khó chọn bậc 1468 g đủ ổn định |
+| 1 | 3 | Sau bù, đoạn chồng cân ~20,78 N, vượt ngưỡng sàng lọc danh định |
+| 11 | 2 | Nhiều bậc và lực biến thiên, chưa tách chắc lúc chỉ có 1468 g |
+
 ## Bước tiếp theo với người đo
 
 1. Kiểm tra vài ô đã hiệu chỉnh bằng quả 1468 g: H1C3, H2C3, H5C3, H12C4.
+   Đây là danh sách chân phải. Với chân trái, thử H1C2, H2C1, H5C2, H12C4.
    Nhấc ra đặt lại 3 lần; không dùng cùng đoạn log để tuyên bố chính xác.
-2. Đo lại 8 ô ở trên: không tải → chỉ 1468 g → nhấc hết. Chưa cần quả nhỏ.
+2. Đo lại 8 ô phải và 3 ô trái ở trên: không tải → chỉ 1468 g → nhấc hết. Chưa cần quả nhỏ.
    Giữ mỗi mức khoảng 10 giây, cùng vị trí và điểm tì, lặp 3 lần.
 3. Ghi rõ thứ tự ô, thời điểm và tên log. Không đổi cách lắp giữa các lượt.
 4. Nếu đổi miếng hoặc lắp trong giày, không dùng nền cũ để kết luận lực tuyệt đối.
@@ -62,3 +85,7 @@ lại log đã chứa Newton. Backend nhận Newton giữ nguyên giá trị gó
 Chạy `backend/venv/Scripts/python.exe backend/analyze_right_calibration_20260928.py`
 từ thư mục dự án. Script chỉ sinh lại profile, không sửa log nguồn. Cửa sổ đo là
 khoảng thời gian đã xem xét cho riêng log này, không phải nhận dạng cân tự động.
+
+Với chân trái, chạy `backend/venv/Scripts/python.exe backend/analyze_left_calibration_20260928.py`.
+Mỗi script kiểm SHA-256 của log nguồn trước khi sinh profile, không dùng các cửa sổ
+này cho log khác. Tái tạo profile chân phải sau khi bổ sung chân trái không đổi hệ số cũ.
