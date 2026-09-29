@@ -8,6 +8,14 @@ import FSR_Transmitter_2 as transmitter
 
 
 class CellCalibrationTests(unittest.TestCase):
+    def test_confirmed_right_first_cell_placement_is_not_overamplified(self):
+        raw = [[250.0]*4 for _ in range(12)]
+        # Equivalent filtered ADC at the user-confirmed 18.05N placement.
+        raw[0][0] = 224.7312604769968
+        value = transmitter.matrix_for_unit(raw, 'newton', 'right')[0][0]
+        self.assertGreater(value, 13.0)
+        self.assertLess(value, 15.0)
+
     def test_builtin_profiles_cover_both_feet_and_can_be_disabled(self):
         self.assertTrue(hasattr(transmitter, 'BUILTIN_CELL_CALIBRATIONS'))
         profiles = transmitter.BUILTIN_CELL_CALIBRATIONS
