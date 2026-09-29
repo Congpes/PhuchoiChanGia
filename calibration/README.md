@@ -1,5 +1,32 @@
 # Hiệu chỉnh thử từng ô hai chân — 28/09/2026
 
+## Cập nhật 29/09: thử ba mốc cho 18 ô chân phải
+
+Mở trực tiếp `FSR_Transmitter_2.py` từ thư mục dự án và chọn Newton, không cần
+nạp JSON. Đóng transmitter cũ trước khi mở lại. Profile phải đang dùng là
+`right-20260929-three-point-v4`; trái giữ nguyên. Không cần file chạy riêng.
+
+- Phạm vi: H1C1 đến H6C2, **trừ H2C1, H2C3, H5C4, H6C1**. Bốn ô này và các
+  ô ngoài phạm vi giữ nguyên hệ số trước lần sửa này, không phải đã đạt chuẩn.
+- Nguồn `fsr_logs/check.jsonl`; SHA-256 và cửa sổ từng mức lưu tại
+  `RIGHT_THREE_POINT_20260929` trong transmitter. Tính từ ADC đã lọc qua công
+  thức gốc rồi trừ nền cũ, không lấy Newton đã hiệu chỉnh để nhân bù lần nữa.
+- Nội suy qua (0, 0), mốc quả 1468 g = 14,3961622 N và mốc chồng quả nhỏ
+  khoảng 333,3 g = 17,664718645 N. Quả nhỏ chưa xác minh chính xác khối lượng.
+  Nền cũ được giữ nguyên; đây **không phải zero mới trong giày**.
+- Trên mốc cao nhất: tiếp tục tăng liên tục theo hệ số cũ, không chặn hoặc ép
+  về số cân. Cả vùng ngoại suy lẫn vùng tải thấp chưa được kiểm chứng độc lập.
+- Đoạn lấy quả nhỏ ra không dùng khớp đường cong; 18 ô có trung vị đoạn này
+  lệch không quá 1 N so với quả lớn. Đây chỉ là sàng lọc trong cùng chu kỳ,
+  không chứng minh độ chính xác khi đặt lại, đi bộ hay tổng lực người đứng.
+
+Test lại: không tải → quả lớn → chồng quả nhỏ → lấy quả nhỏ ra → nhấc hết;
+giữ mỗi mức khoảng 8–10 giây, giữ cách đặt và điểm tì nhất quán, lưu log mới.
+Ưu tiên H1C1, H1C2, H4C3 rồi các ô còn lại; đo riêng bốn ô cần đo lại ở trên.
+`--no-calibration` tắt hiệu chỉnh; cờ nạp JSON riêng vẫn dùng đúng profile đó.
+
+Các mục bên dưới là lịch sử, không phải hướng dẫn chạy bộ ba mốc hiện tại.
+
 ## Cập nhật sau log đo lại
 
 Mở trực tiếp `FSR_Transmitter_2.py`, chọn Newton: bộ hệ số hai chân đã được

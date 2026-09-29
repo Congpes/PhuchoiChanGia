@@ -158,6 +158,37 @@ RIGHT_REFIT_20260929 = [
 for _fit in RIGHT_REFIT_20260929:
     BUILTIN_CELL_CALIBRATIONS['right']['cells'][_fit['row']-1][_fit['column']-1]['gain'] = _fit['gain']
 BUILTIN_CELL_CALIBRATIONS['right']['id'] = 'right-20260929-single-load-v3'
+# Provisional three-anchor refit: check.jsonl, filtered ADC -> legacy N minus
+# existing baseline. Only the two loading holds fit the curve; unloading is
+# a same-cycle check, NOT independent validation. No new live shoe tare.
+# Targets assume 1468g and approximately 333.3g; small weight not certified.
+# Outside the measured interval retain previous gain, not a validated range.
+# Source SHA256: b91b473856b7d2a82988f9cbe89e34b10c98cf0577aa552d9f3cb5e782c9dafe
+RIGHT_THREE_POINT_20260929 = [
+    {"row":1,"column":1,"points_n":[[0,0],[9.360848730714954,14.3961622],[11.138778653745558,17.664718645]],"windows_s":[[10,13],[19,23],[25,27]],"return_input_n":9.465529657083524},
+    {"row":1,"column":2,"points_n":[[0,0],[10.95228890695742,14.3961622],[13.446527279254138,17.664718645]],"windows_s":[[36,40],[44,48],[50,53]],"return_input_n":10.841306469025277},
+    {"row":1,"column":3,"points_n":[[0,0],[9.06936886403129,14.3961622],[10.978806319801134,17.664718645]],"windows_s":[[64,68],[75,80],[83,86]],"return_input_n":9.60731440020786},
+    {"row":1,"column":4,"points_n":[[0,0],[9.750660732815716,14.3961622],[12.964217215607764,17.664718645]],"windows_s":[[97,102],[108,112],[114,117]],"return_input_n":10.026271061072462},
+    {"row":2,"column":2,"points_n":[[0,0],[15.303278005210892,14.3961622],[17.811387064152022,17.664718645]],"windows_s":[[160,165],[172,177],[181,185]],"return_input_n":14.719255495690785},
+    {"row":2,"column":4,"points_n":[[0,0],[8.679548698323968,14.3961622],[11.147654522453768,17.664718645]],"windows_s":[[242,248],[254,260],[264,268]],"return_input_n":8.941786386325193},
+    {"row":3,"column":1,"points_n":[[0,0],[11.647684112260489,14.3961622],[14.23632636429668,17.664718645]],"windows_s":[[279,283],[290,295],[300,304]],"return_input_n":11.943312050125922},
+    {"row":3,"column":2,"points_n":[[0,0],[12.147310868739337,14.3961622],[14.972892849897024,17.664718645]],"windows_s":[[322,327],[332,337],[340,344]],"return_input_n":12.640077580210868},
+    {"row":3,"column":3,"points_n":[[0,0],[14.404163942269767,14.3961622],[16.833834671068036,17.664718645]],"windows_s":[[353,357],[364,369],[373,377]],"return_input_n":15.018556033129153},
+    {"row":3,"column":4,"points_n":[[0,0],[12.290458688098859,14.3961622],[14.523766623050351,17.664718645]],"windows_s":[[393,398],[405,410],[415,419]],"return_input_n":12.73075013503053},
+    {"row":4,"column":1,"points_n":[[0,0],[8.19813054869444,14.3961622],[10.976423453994107,17.664718645]],"windows_s":[[430,435],[440,445],[449,453]],"return_input_n":8.940100608771683},
+    {"row":4,"column":2,"points_n":[[0,0],[10.24632007129055,14.3961622],[13.319469827031629,17.664718645]],"windows_s":[[470,474],[478,482],[486,489]],"return_input_n":10.48904934420391},
+    {"row":4,"column":3,"points_n":[[0,0],[15.939218820419802,14.3961622],[17.48691199452025,17.664718645]],"windows_s":[[502,507],[514,519],[523,527]],"return_input_n":16.125300741837634},
+    {"row":4,"column":4,"points_n":[[0,0],[11.586443532095123,14.3961622],[14.912070874995232,17.664718645]],"windows_s":[[535,539],[544,548],[551,554]],"return_input_n":12.170237640459884},
+    {"row":5,"column":1,"points_n":[[0,0],[12.727532573402522,14.3961622],[15.75759057304759,17.664718645]],"windows_s":[[566,570],[576,580],[582,586]],"return_input_n":13.388409941321797},
+    {"row":5,"column":2,"points_n":[[0,0],[8.371156269437689,14.3961622],[11.00393055472572,17.664718645]],"windows_s":[[598,602],[611,616],[620,623]],"return_input_n":8.822749370992303},
+    {"row":5,"column":3,"points_n":[[0,0],[14.447428755492831,14.3961622],[17.164376507495135,17.664718645]],"windows_s":[[634,638],[643,647],[650,654]],"return_input_n":14.110702174156314},
+    {"row":6,"column":2,"points_n":[[0,0],[13.184073717035979,14.3961622],[15.409655686766007,17.664718645]],"windows_s":[[737,741],[748,753],[757,760]],"return_input_n":12.91142155080393},
+]
+RIGHT_THREE_POINT_RETEST_CELLS = [(2, 1), (2, 3), (5, 4), (6, 1)]
+for _fit in RIGHT_THREE_POINT_20260929:
+    BUILTIN_CELL_CALIBRATIONS['right']['cells'][_fit['row']-1][_fit['column']-1]['points_n'] = _fit['points_n']
+BUILTIN_CELL_CALIBRATIONS['right']['id'] = 'right-20260929-three-point-v4'
+BUILTIN_CELL_CALIBRATIONS['right']['status'] = 'provisional_mixed_three_point_not_validated'
 CELL_CALIBRATIONS = BUILTIN_CELL_CALIBRATIONS
 DEFAULT_TARGET_PORT = 8765
 DEFAULT_SEND_RATE_HZ = 20
@@ -1836,12 +1867,15 @@ if __name__ == "__main__":
                        for c, cell in enumerate(row) if cell is None]
             label = 'Phải' if side == 'right' else 'Trái'
             notes.append(f'{label}: các ô (hàng, cột) CHƯA hiệu chỉnh: {pending}')
-        window.title(window.title() + ' | HIỆU CHỈNH THỬ 14,4 N: ' + ', '.join(CELL_CALIBRATIONS))
+            if profile.get('id') == 'right-20260929-three-point-v4':
+                notes.append('Phải: 18 ô thử ba mốc 0 / 14,4 / 17,66 N; còn lại giữ hệ số cũ.')
+                notes.append(f'Phải: cần đo lại (hàng, cột): {RIGHT_THREE_POINT_RETEST_CELLS}')
+        window.title(window.title() + ' | HIỆU CHỈNH THỬ: ' + ', '.join(CELL_CALIBRATIONS))
         messagebox.showinfo('Hiệu chỉnh sơ bộ FSR',
                             'Chỉ dùng với đúng các miếng đã đo và cùng cách lắp.\n'
                             'Chọn Newton để áp dụng. ADC và bên không nạp profile giữ nguyên.\n'
                             'Chưa kiểm chứng toàn dải lực; chưa zero khi lắp giày.\n'
-                            '11 ô đo lại đã bù trung vị; độ lặp vẫn chưa ổn định.\n'
+                            'Hiệu chỉnh sơ bộ; cần cân lại cả lúc tăng và giảm tải.\n'
                             'Mở với --no-calibration để trở về công thức cũ.\n'
                             + '\n'.join(notes))
     window.mainloop()

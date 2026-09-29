@@ -7,7 +7,7 @@ import math
 
 
 def apply_cell_calibration(matrix, side, profile=None):
-    """Apply a specimen-specific, one-point profile to legacy Newton estimates.
+    """Apply a specimen-specific profile to legacy Newton estimates.
 
     Missing cells stay uncalibrated. Never use on raw ADC or already corrected
     packets. This does not claim full-range accuracy or perform live shoe tare.
@@ -25,7 +25,30 @@ def apply_cell_calibration(matrix, side, profile=None):
             baseline, gain = float(cell['baseline_n']), float(cell['gain'])
             if not math.isfinite(baseline) or baseline < 0 or not math.isfinite(gain) or gain <= 0:
                 raise ValueError('Invalid cell calibration parameters')
-            row[column] = max(0.0, row[column] - baseline) * gain
+            value = max(0.0, row[column] - baseline)
+            if 'points_n' not in cell:
+                row[column] = value * gain
+                continue
+            # Optional three anchors in baseline-subtracted legacy N -> target N.
+            # Do not multiply by the old gain again inside the measured range.
+            try:
+                points = [(float(x), float(y)) for x, y in cell['points_n']]
+            except (TypeError, ValueError) as exc:
+                raise ValueError('Invalid cell calibration anchors') from exc
+            if (len(points) != 3 or points[0] != (0.0, 0.0)
+                    or any(not math.isfinite(v) for point in points for v in point)
+                    or any(x1 <= x0 or y1 <= y0
+                           for (x0, y0), (x1, y1) in zip(points, points[1:]))):
+                raise ValueError('Calibration anchors must start at zero and increase')
+            for (x0, y0), (x1, y1) in zip(points, points[1:]):
+                if value <= x1:
+                    row[column] = y0 + (value - x0) * (y1 - y0) / (x1 - x0)
+                    break
+            else:
+                # Unvalidated extrapolation: retain previous gain beyond last
+                # anchor, continuously; never saturate/snap to the test weight.
+                x1, y1 = points[-1]
+                row[column] = y1 + (value - x1) * gain
     return values
 
 
