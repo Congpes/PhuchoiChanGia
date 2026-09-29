@@ -1,5 +1,35 @@
 # Hiệu chỉnh thử từng ô hai chân — 28/09/2026
 
+## Zero đế / giày trong phiên đo
+
+- Mặc định **Zero hết**: mang lót/giày, ngồi vững và nhấc cả hai chân khỏi sàn,
+  thả lỏng, bấm nút rồi xác nhận. Có nút **Zero chân trái/phải** để làm riêng.
+  Đừng đứng chịu tải khi lấy zero: phần mềm không thể phân biệt một tải tĩnh
+  với lực ép nền. Lấy lại zero khi thay đổi cách mang/lắp giày.
+- Thu khoảng 3 giây; cần ít nhất 20 mẫu mỗi bên, trải ít nhất 2,5 giây, không
+  gián đoạn quá 0,5 giây. Zero hết yêu cầu đủ hai bên; lỗi không áp dụng nửa chừng.
+- Nền mỗi ô là trung vị lực Newton đã hiệu chỉnh. Lực hiển thị/gửi/log là
+  phần tăng so với nền, không âm. ADC và hệ số hiệu chuẩn gốc không thay đổi.
+- Ngưỡng nhiễu từng ô = max(0,02 N, phân vị mẫu 95% độ lệch tuyệt đối quanh
+  trung vị); dưới ngưỡng hiển thị 0, trên ngưỡng giữ đầy đủ phần lực tăng.
+  Không cập nhật nền tự động khi chân đang đè. Đây là lọc thử, có thể mất lực
+  rất nhẹ dưới ngưỡng; cần kiểm tra với dữ liệu giày thật.
+- Sàng lọc ổn định thử nghiệm: khoảng P90–P10 mỗi ô không vượt max(1 N,
+  20% nền), và chênh trung vị hai nửa không vượt max(0,3 N, 10% nền).
+  Những ngưỡng này không chứng minh zero đúng hay độ chính xác lực.
+- Nút chính thành **Huỷ zero** khi đang thu hoặc bất kỳ bên nào đã zero.
+  Bấm sẽ huỷ toàn bộ nền/ngưỡng và về lực trước zero, không mất ADC/log cũ.
+  Đóng/ngắt/kết nối lại FSR, đổi đơn vị hoặc EMA đều huỷ zero để lấy lại.
+- Zero chỉ dùng dữ liệu FSR trực tiếp ở Newton; không dùng dữ liệu gửi thử
+  hay áp lại cho log phát lại. Log giữ ADC gốc, ADC đã lọc, nền/ngưỡng và
+  `zero_applied`, `zero_revision`, `zero_collecting` của chính mẫu đó.
+  Dữ liệu trong lúc thu zero vẫn gửi với cờ đang thu; không bắt đầu phiên
+  phân tích bước đi cho tới khi lấy zero thành công.
+
+Test thực tế: kiểm tra trạng thái khi nhấc chân, đè rồi nhấc lại, thử riêng
+từng chân, cuối cùng bấm Huỷ zero. Lưu log để kiểm tra độ trôi và lực nhẹ;
+zero không thay thế hiệu chuẩn tải và không đảm bảo tổng lực đứng đã đúng.
+
 ## Cập nhật 29/09: thử ba mốc cho 18 ô chân phải
 
 Mở trực tiếp `FSR_Transmitter_2.py` từ thư mục dự án và chọn Newton, không cần

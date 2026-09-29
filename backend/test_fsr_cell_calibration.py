@@ -1,10 +1,206 @@
 import unittest
 import sys
+import io
+import json
+import threading
+import socket
+from unittest.mock import patch
 from pathlib import Path
 
 import fsr_force
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import FSR_Transmitter_2 as transmitter
+
+
+class ShoeZeroTests(unittest.TestCase):
+    def capture(self, zero, sides=('left', 'right'), base=5.0):
+        for side in sides:
+            zero.process(side, [[base]], 0)
+        zero.start(sides, 0)
+        for i in range(1, 61):
+            for side in sides:
+                zero.process(side, [[base + (0.01 if i % 2 else -0.01)]], i/20)
+        zero.finish(3.0)
+
+    def test_both_zero_filters_small_noise_keeps_increment_and_cancel_restores(self):
+        zero = transmitter.ShoeZero()
+        self.capture(zero)
+        self.assertEqual(zero.state()[0], ('left', 'right'))
+        for side in ('left', 'right'):
+            result, meta = zero.process(side, [[5.01]], 3.1)
+            self.assertEqual(result, [[0]])
+            self.assertTrue(meta['zero_applied'])
+            self.assertEqual(meta['zero_baseline_n'], [[5]])
+            self.assertAlmostEqual(zero.process(side, [[8.3]], 3.2)[0][0][0], 3.3)
+        zero.reset()
+        self.assertEqual(zero.process('right', [[8.3]], 4)[0], [[8.3]])
+        self.assertFalse(zero.process('right', [[8.3]], 4)[1]['zero_applied'])
+
+    def test_single_side_does_not_change_other_and_never_rezeros_while_loaded(self):
+        zero = transmitter.ShoeZero()
+        self.capture(zero, ('right',))
+        self.assertEqual(zero.process('left', [[9]], 4)[0], [[9]])
+        for i in range(10):
+            self.assertEqual(zero.process('right', [[15]], 4+i)[0], [[10]])
+
+    def test_missing_stale_or_unstable_capture_does_not_partially_commit(self):
+        zero = transmitter.ShoeZero()
+        zero.process('right', [[5]], 0)
+        with self.assertRaises(ValueError):
+            zero.start(('left', 'right'), 0)
+        with self.assertRaises(ValueError):
+            zero.start(('right',), 2)
+        zero.process('left', [[5]], 2)
+        zero.process('right', [[5]], 2)
+        zero.start(('left', 'right'), 2)
+        for i in range(1, 61):
+            zero.process('left', [[5]], 2+i/20)
+            zero.process('right', [[5 if i<30 else 10]], 2+i/20)
+        with self.assertRaises(ValueError):
+            zero.finish(5)
+        self.assertEqual(zero.state(), ((), False))
+
+    def test_capture_timeout_sparse_samples_and_shape_change_are_rejected(self):
+        for samples in ([(.1, 5), (3, 5)], [(i/20,5) for i in range(1,30)]):
+            zero = transmitter.ShoeZero()
+            zero.process('right', [[5]], 0)
+            zero.start(('right',), 0)
+            for stamp, val in samples:
+                zero.process('right', [[val]], stamp)
+            with self.assertRaises(ValueError):
+                zero.finish(3)
+            self.assertEqual(zero.state(), ((), False))
+        zero = transmitter.ShoeZero()
+        self.capture(zero, ('right',))
+        with self.assertRaises(ValueError):
+            zero.process('right', [[5, 5]], 4)
+
+    def test_nonfinite_input_never_enters_zero_capture(self):
+        zero = transmitter.ShoeZero()
+        for value in (float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                zero.process('right', [[value]], 0)
+
+    def test_live_conversion_uses_zero_only_for_newton(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.shoe_zero = transmitter.ShoeZero()
+        raw = [[200.0]*4 for _ in range(12)]
+        baseline = transmitter.matrix_for_unit(raw, 'newton', 'right')
+        app._convert_live_matrix(raw, 'newton', 'right', 0)
+        app.shoe_zero.start(('right',), 0)
+        for i in range(1, 61):
+            app._convert_live_matrix(raw, 'newton', 'right', i/20)
+        app.shoe_zero.finish(3)
+        output, metadata = app._convert_live_matrix(raw, 'newton', 'right', 3.1)
+        self.assertEqual(output, [[0.0]*4 for _ in range(12)])
+        self.assertEqual(metadata['zero_baseline_n'], baseline)
+        output, metadata = app._convert_live_matrix(raw, 'raw_adc', 'right', 3.2)
+        self.assertEqual(output, raw)
+        self.assertFalse(metadata['zero_applied'])
+
+    def test_live_raw_nonfinite_is_rejected_before_conversion(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.shoe_zero = transmitter.ShoeZero()
+        raw = [[200.0]*4 for _ in range(12)]
+        raw[0][0] = float('nan')
+        with self.assertRaises(ValueError):
+            app._convert_live_matrix(raw, 'newton', 'right', 0)
+
+    def test_invalid_raw_does_not_poison_ema_history(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.smoothed_matrices = {}
+        app.ema_alpha_value = .2
+        with self.assertRaises(ValueError):
+            app._apply_ema_filter(1, [[float('nan')]])
+        self.assertEqual(app.smoothed_matrices, {})
+        self.assertEqual(app._apply_ema_filter(1, [[200]]), [[200]])
+
+    def test_queued_old_zero_frame_is_not_painted_after_cancel(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.shoe_zero = transmitter.ShoeZero()
+        app.running = True
+        app._selected_unit = 'newton'
+        self.capture(app.shoe_zero, ('right',))
+        _, metadata = app.shoe_zero.process('right', [[5]], 3.1)
+        app.shoe_zero.reset()
+        # Intentionally no canvases: outdated callback must return before drawing.
+        app._update_after_frame(1, 'right', [[0]], 'newton', 'old', metadata)
+
+    def test_udp_transmits_same_zero_values_and_metadata_as_log(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.send_lock = threading.Lock()
+        app.sequence = 0
+        app.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            receiver.bind(('127.0.0.1', 0))
+            receiver.settimeout(1)
+            meta = {'zero_applied': True, 'zero_revision': 2,
+                    'zero_baseline_n': [[5]], 'zero_noise_n': [[.02]]}
+            app._send_matrix_udp([[3]], '127.0.0.1', receiver.getsockname()[1],
+                                 ('test-device', 'right', 'newton'), meta)
+            record = json.loads(receiver.recv(60000))
+            self.assertEqual(record['values'], [[3]])
+            self.assertEqual(record['unit'], 'newton')
+            for key, value in meta.items():
+                self.assertEqual(record[key], value)
+        finally:
+            receiver.close()
+            app.socket.close()
+
+    def test_failed_retake_preserves_old_zero_until_explicit_cancel(self):
+        zero = transmitter.ShoeZero()
+        self.capture(zero, ('right',))
+        zero.process('right', [[5]], 4)
+        zero.start(('right',), 4)
+        with self.assertRaises(ValueError):
+            zero.finish(7)
+        self.assertEqual(zero.process('right', [[8]], 7.1)[0], [[3]])
+        zero.reset()
+        self.assertEqual(zero.process('right', [[8]], 7.2)[0], [[8]])
+
+    def test_log_keeps_original_adc_and_exact_zero_snapshot(self):
+        app = transmitter.FSRTransmitterApp.__new__(transmitter.FSRTransmitterApp)
+        app.log_lock = threading.Lock()
+        app.log_handle = io.StringIO()
+        app.log_started_at = 0
+        app.log_sample_count = 0
+        metadata = {'zero_applied': True, 'zero_baseline_n': [[5]],
+                    'zero_noise_n': [[.02]], 'zero_revision': 1}
+        app._write_log_sample('right', [[200]], [[201]], [[3]], 'newton', 4, metadata)
+        record = json.loads(app.log_handle.getvalue())
+        self.assertEqual(record['raw_values'], [[200]])
+        self.assertEqual(record['filtered_raw_values'], [[201]])
+        self.assertEqual(record['values'], [[3]])
+        for key, value in metadata.items():
+            self.assertEqual(record[key], value)
+
+    def test_zero_ui_cancel_and_single_foot_action(self):
+        # Real Tk controls and callbacks, no serial port opened.
+        root = transmitter.tk.Tk()
+        root.withdraw()
+        app = transmitter.FSRTransmitterApp(root)
+        try:
+            self.assertEqual(app.zero_button_text.get(), 'Zero hết')
+            app.running = True
+            app.shoe_zero.process('right', [[5]], 0)
+            with patch.object(transmitter.messagebox, 'askokcancel', return_value=True), \
+                    patch.object(transmitter.time, 'monotonic', return_value=0):
+                app.zero_right_button.invoke()
+            self.assertTrue(app.shoe_zero.state()[1])
+            self.assertEqual(app.zero_button_text.get(), 'Huỷ zero')
+            self.assertIn('disabled', app.zero_left_button.state())
+            app._toggle_zero()
+            self.assertEqual(app.shoe_zero.state(), ((), False))
+            self.assertEqual(app.zero_button_text.get(), 'Zero hết')
+            self.assertNotIn('disabled', app.zero_left_button.state())
+            self.capture(app.shoe_zero, ('right',))
+            app._refresh_zero_controls()
+            self.assertEqual(app.zero_button_text.get(), 'Huỷ zero')
+            app._toggle_zero()
+            self.assertEqual(app.shoe_zero.process('right', [[8]], 4)[0], [[8]])
+        finally:
+            app.close()
 
 
 class CellCalibrationTests(unittest.TestCase):

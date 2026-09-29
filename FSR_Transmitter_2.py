@@ -9,6 +9,7 @@ import time
 import tkinter as tk
 from collections import deque
 from pathlib import Path
+from statistics import median
 from tkinter import filedialog, messagebox, ttk
 
 try:
@@ -400,6 +401,114 @@ def build_packet(device_id, side, unit, sequence, matrix):
     }
 
 
+class ShoeZero:
+    """Session-only tare of calibrated Newton, never of raw ADC or old logs.
+
+    Stability/noise limits are provisional screening settings, not accuracy
+    claims. A stable loaded foot cannot be detected: operator must unload it.
+    All state is locked because two serial workers and Tk share this object.
+    """
+    duration = 3.0
+    fresh_seconds = 0.5
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.profiles = {}
+        self.latest = {}
+        self.pending = None
+        self.revision = 0
+
+    def state(self):
+        with self.lock:
+            return tuple(sorted(self.profiles)), self.pending is not None
+
+    def is_current(self, metadata):
+        with self.lock:
+            return metadata.get('zero_revision') == self.revision
+
+    def reset(self):
+        with self.lock:
+            self.profiles.clear()
+            self.latest.clear()
+            self.pending = None
+            self.revision += 1
+
+    def start(self, sides, now):
+        with self.lock:
+            sides = tuple(sides)
+            if not sides or any(s not in ('left', 'right') for s in sides):
+                raise ValueError('Chọn chân trái, phải hoặc cả hai.')
+            if self.pending is not None:
+                raise ValueError('Đang thu mẫu zero.')
+            if any(s not in self.latest or not 0 <= now-self.latest[s] <= self.fresh_seconds
+                   for s in sides):
+                raise ValueError('Thiếu dữ liệu mới ở chân đã chọn. Kiểm tra kết nối FSR.')
+            self.pending = {'start': now, 'samples': {s: [] for s in sides}}
+
+    def process(self, side, matrix, now):
+        values = validate_matrix(matrix)
+        if any(not math.isfinite(v) for row in values for v in row):
+            raise ValueError('Dữ liệu FSR không hữu hạn; không thể lấy zero.')
+        with self.lock:
+            self.latest[side] = now
+            if (self.pending is not None and side in self.pending['samples']
+                    and 0 <= now-self.pending['start'] <= self.duration):
+                self.pending['samples'][side].append((now, values))
+            profile = self.profiles.get(side)
+            meta = {'zero_applied': profile is not None,
+                    'zero_revision': self.revision,
+                    'zero_collecting': self.pending is not None}
+            if profile is None:
+                return values, meta
+            baseline, noise = profile['baseline'], profile['noise']
+            if len(values) != len(baseline) or any(len(a) != len(b) for a, b in zip(values, baseline)):
+                raise ValueError('Kích thước FSR thay đổi; huỷ zero rồi lấy lại.')
+            result = [[max(0.0, v-b) if v-b > n else 0.0
+                       for v, b, n in zip(row, base, band)]
+                      for row, base, band in zip(values, baseline, noise)]
+            meta.update(zero_baseline_n=[r[:] for r in baseline],
+                        zero_noise_n=[r[:] for r in noise],
+                        zero_method='calibrated_newton_median_deadband_v1')
+            return result, meta
+
+    def finish(self, now):
+        with self.lock:
+            pending, self.pending = self.pending, None
+            if pending is None:
+                raise ValueError('Không có lượt lấy zero đang chạy.')
+            fitted = {}
+            for side, samples in pending['samples'].items():
+                if (now-pending['start'] < self.duration or len(samples) < 20
+                        or samples[-1][0]-samples[0][0] < 2.5
+                        or now-samples[-1][0] > self.fresh_seconds
+                        or any(b[0]-a[0] > self.fresh_seconds for a, b in zip(samples, samples[1:]))):
+                    raise ValueError('Mẫu zero thiếu hoặc gián đoạn. Nhấc chân, giữ yên và thử lại.')
+                shape = [len(row) for row in samples[0][1]]
+                if any([len(row) for row in m] != shape for _, m in samples):
+                    raise ValueError('Kích thước FSR thay đổi trong lúc lấy zero.')
+                baseline, noise = [], []
+                for r, columns in enumerate(shape):
+                    base_row, noise_row = [], []
+                    for c in range(columns):
+                        data = [m[r][c] for _, m in samples]
+                        ordered = sorted(data)
+                        center = median(data)
+                        spread = ordered[int(.9*(len(data)-1))]-ordered[int(.1*(len(data)-1))]
+                        drift = abs(median(data[:len(data)//2])-median(data[len(data)//2:]))
+                        # Reject movement instead of hiding it in a large deadband.
+                        if spread > max(1.0, .2*center) or drift > max(.3, .1*center):
+                            raise ValueError(f'{side}: H{r+1}C{c+1} chưa ổn định. Giữ yên và lấy zero lại.')
+                        deviations = sorted(abs(v-center) for v in data)
+                        base_row.append(center)
+                        noise_row.append(max(.02, deviations[int(.95*(len(data)-1))]))
+                    baseline.append(base_row)
+                    noise.append(noise_row)
+                fitted[side] = {'baseline': baseline, 'noise': noise}
+            # Atomic: failure on either foot leaves all previous profiles intact.
+            self.profiles.update(fitted)
+            self.revision += 1
+
+
 class FSRTransmitterApp:
     def __init__(self, root):
         self.root = root
@@ -423,6 +532,11 @@ class FSRTransmitterApp:
         self.ema_label_text = tk.StringVar(value='EMA alpha: 0.20')
         self.smoothed_matrices = {}
         self.last_raw_matrices = {}
+        self.shoe_zero = ShoeZero()
+        self.zero_after_id = None
+        self.zero_started_at = None
+        self.zero_button_text = tk.StringVar(value='Zero hết')
+        self.zero_status = tk.StringVar(value='Chưa zero · chỉ áp dụng dữ liệu trực tiếp (Newton)')
         self.chart_history = {
             "left": deque(maxlen=CHART_MAX_POINTS),
             "right": deque(maxlen=CHART_MAX_POINTS),
@@ -628,6 +742,18 @@ class FSRTransmitterApp:
         ttk.Label(log_controls, textvariable=self.playback_status).pack(side=tk.RIGHT)
         ttk.Label(log_controls, textvariable=self.log_status).pack(side=tk.RIGHT, padx=(0, 18))
 
+        zero_controls = ttk.LabelFrame(container, text='Zero đế / giày · lực tăng so với nền', padding=6)
+        zero_controls.pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(zero_controls, textvariable=self.zero_button_text,
+                   command=self._toggle_zero).pack(side=tk.LEFT)
+        self.zero_left_button = ttk.Button(zero_controls, text='Zero chân trái',
+                                          command=lambda: self._start_zero(('left',)))
+        self.zero_left_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.zero_right_button = ttk.Button(zero_controls, text='Zero chân phải',
+                                           command=lambda: self._start_zero(('right',)))
+        self.zero_right_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(zero_controls, textvariable=self.zero_status, wraplength=560).pack(side=tk.LEFT, padx=12)
+
         notebook = ttk.Notebook(container)
         notebook.pack(fill=tk.BOTH, expand=True, pady=12)
         self.main_notebook = notebook
@@ -722,7 +848,77 @@ class FSRTransmitterApp:
             self.connection_toggle_text.set("▼ Thu gọn thiết lập kết nối")
         self.root.after_idle(self._schedule_chart_redraw)
 
+    def _refresh_zero_controls(self):
+        sides, pending = self.shoe_zero.state()
+        self.zero_button_text.set('Huỷ zero' if sides or pending else 'Zero hết')
+        for button in (self.zero_left_button, self.zero_right_button):
+            button.configure(state='disabled' if pending else 'normal')
+
+    def _reset_zero(self, reason='Đã huỷ zero · trở về lực trước zero'):
+        sides, pending = self.shoe_zero.state()
+        if self.zero_after_id is not None:
+            self.root.after_cancel(self.zero_after_id)
+            self.zero_after_id = None
+        self.shoe_zero.reset()
+        if sides or pending:
+            self.clear_charts()
+        self.zero_status.set(reason)
+        self._refresh_zero_controls()
+
+    def _toggle_zero(self):
+        sides, pending = self.shoe_zero.state()
+        if sides or pending:
+            self._reset_zero()
+            self.clear_charts()
+            # Restore the current display without waiting for a new frame.
+            for side, raw in list(self.last_raw_matrices.items()):
+                self.draw_matrix(matrix_for_unit(raw, self._selected_unit, side),
+                                 side, self._selected_unit)
+        else:
+            self._start_zero(('left', 'right'))
+
+    def _start_zero(self, sides):
+        if not self.running or self._selected_unit != 'newton':
+            messagebox.showwarning('Lấy zero', 'Kết nối FSR trực tiếp và chọn Newton trước khi lấy zero.')
+            return
+        label = 'cả hai chân' if len(sides) == 2 else ('chân trái' if sides[0] == 'left' else 'chân phải')
+        if not messagebox.askokcancel('Lấy zero khi mang giày',
+                f'Ngồi vững, nhấc {label} khỏi sàn và giữ yên.\n'
+                'Không đứng chịu tải khi bấm zero. Phần mềm không tự nhận biết chân đang chịu tải.\n'
+                'Bấm OK khi đã sẵn sàng; thu mẫu khoảng 3 giây.', parent=self.root):
+            return
+        try:
+            self.zero_started_at = time.monotonic()
+            self.shoe_zero.start(sides, self.zero_started_at)
+        except ValueError as exc:
+            self.zero_status.set(str(exc))
+            return
+        self._refresh_zero_controls()
+        self._poll_zero()
+
+    def _poll_zero(self):
+        self.zero_after_id = None
+        if not self.shoe_zero.state()[1]:
+            return
+        now = time.monotonic()
+        remaining = self.shoe_zero.duration-(now-self.zero_started_at)
+        if remaining > 0:
+            self.zero_status.set(f'Đang lấy zero: còn {remaining:.1f}s · giữ chân khỏi sàn')
+            self.zero_after_id = self.root.after(100, self._poll_zero)
+            return
+        try:
+            self.shoe_zero.finish(now)
+            sides, _ = self.shoe_zero.state()
+            labels = ', '.join('trái' if s == 'left' else 'phải' for s in sides)
+            self.zero_status.set(f'Đã zero: {labels} · đang hiển thị lực tăng thêm')
+            self.clear_charts()
+        except ValueError as exc:
+            retained = ' · Zero cũ vẫn giữ' if self.shoe_zero.state()[0] else ''
+            self.zero_status.set(f'Không lấy được zero: {exc}{retained}')
+        self._refresh_zero_controls()
+
     def _on_unit_change(self, *_args):
+        self._reset_zero('Đổi đơn vị: zero đã huỷ')
         selected = self.unit.get().strip().lower()
         self._selected_unit = selected if selected in ('raw_adc', 'newton') else 'raw_adc'
         self.clear_charts()
@@ -744,10 +940,15 @@ class FSRTransmitterApp:
             self.status.set(f'Đã đổi sang {unit_label(self._selected_unit)}')
 
     def _on_alpha_change(self, value):
+        if hasattr(self, 'zero_left_button'):
+            self._reset_zero('Đổi bộ lọc: cần lấy zero lại')
         self.ema_alpha_value = min(max(float(value), 0.01), 1.0)
         self.ema_label_text.set(f'EMA alpha: {self.ema_alpha_value:.2f}')
 
     def _apply_ema_filter(self, channel_id, matrix):
+        matrix = validate_matrix(matrix)
+        if any(not math.isfinite(v) for row in matrix for v in row):
+            raise ValueError('ADC không hữu hạn; bỏ frame, giữ nguyên bộ lọc.')
         previous = self.smoothed_matrices.get(channel_id)
         if (
             previous is None
@@ -1086,6 +1287,7 @@ class FSRTransmitterApp:
         display_matrix,
         unit,
         received_monotonic,
+        zero_metadata=None,
     ):
         with self.log_lock:
             handle = self.log_handle
@@ -1104,6 +1306,7 @@ class FSRTransmitterApp:
                 "filtered_raw_values": filtered_raw_matrix,
                 "values": display_matrix,
                 **calibration_metadata(side, unit),
+                **(zero_metadata or {'zero_applied': False, 'zero_collecting': False}),
             }
             try:
                 handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -1416,6 +1619,9 @@ class FSRTransmitterApp:
             raise ValueError(f"JSON không hợp lệ: {exc.msg}") from exc
 
     def preview_manual_matrix(self):
+        if self.running:
+            messagebox.showwarning('Gửi thử', 'Ngắt FSR trực tiếp trước khi thử ma trận thủ công.')
+            return
         try:
             side = self.side.get()
             raw_matrix = self._manual_matrix()
@@ -1431,6 +1637,9 @@ class FSRTransmitterApp:
             messagebox.showerror("Lỗi", str(exc))
 
     def send_manual_once(self):
+        if self.running:
+            messagebox.showwarning('Gửi thử', 'Ngắt FSR trực tiếp trước khi thử ma trận thủ công.')
+            return
         try:
             raw_matrix = self._manual_matrix()
             matrix = matrix_for_unit(raw_matrix, self._selected_unit, self.side.get())
@@ -1454,11 +1663,21 @@ class FSRTransmitterApp:
         except (ValueError, OSError) as exc:
             messagebox.showerror("Lỗi", str(exc))
 
-    def _send_matrix_udp(self, matrix, ip, port, packet_settings):
+    def _convert_live_matrix(self, raw_matrix, unit, side, now):
+        raw_matrix = validate_matrix(raw_matrix)
+        if any(not math.isfinite(v) for row in raw_matrix for v in row):
+            raise ValueError('ADC không hữu hạn; không thể tính lực/zero.')
+        matrix = matrix_for_unit(raw_matrix, unit, side)
+        if unit == 'newton':
+            return self.shoe_zero.process(side, matrix, now)
+        return matrix, {'zero_applied': False, 'zero_collecting': False}
+
+    def _send_matrix_udp(self, matrix, ip, port, packet_settings, zero_metadata=None):
         matrix = validate_matrix(matrix)
         device_id, side, unit = packet_settings
         with self.send_lock:
             packet = build_packet(device_id, side, unit, self.sequence, matrix)
+            packet.update(zero_metadata or {'zero_applied': False, 'zero_collecting': False})
             encoded = json.dumps(packet, separators=(",", ":")).encode("utf-8")
             if len(encoded) > 60000:
                 raise ValueError("Gói tin quá lớn")
@@ -1481,6 +1700,7 @@ class FSRTransmitterApp:
 
         self.stop_playback(silent=True)
         self.clear_charts()
+        self._reset_zero('Kết nối mới: chưa lấy zero')
         self.running = True
         self.smoothed_matrices.clear()
         self.last_raw_matrices.clear()
@@ -1515,6 +1735,7 @@ class FSRTransmitterApp:
 
     def _stop_stream(self, status_text=None):
         self.running = False
+        self._reset_zero('Đã ngắt FSR: zero đã huỷ')
         self.smoothed_matrices.clear()
         with self.serial_lock:
             connections = list(self.serial_connections.values())
@@ -1622,7 +1843,9 @@ class FSRTransmitterApp:
                     incoming_raw_matrix = [row[:] for row in matrix]
                     raw_matrix = self._apply_ema_filter(channel_id, matrix)
                     selected_unit = self._selected_unit
-                    matrix = matrix_for_unit(raw_matrix, selected_unit, frame_side)
+                    now = time.monotonic()
+                    matrix, zero_metadata = self._convert_live_matrix(
+                        raw_matrix, selected_unit, frame_side, now)
                     self.last_raw_matrices[frame_side] = [row[:] for row in raw_matrix]
                     current_packet_settings = (
                         packet_settings[0], frame_side, selected_unit
@@ -1635,7 +1858,6 @@ class FSRTransmitterApp:
                     )
                     continue
 
-                now = time.monotonic()
                 self.frame_counts[channel_id] += 1
                 self._write_log_sample(
                     frame_side,
@@ -1644,11 +1866,12 @@ class FSRTransmitterApp:
                     matrix,
                     selected_unit,
                     now,
+                    zero_metadata,
                 )
 
                 if now - last_send_time >= min_period:
                     status = self._send_matrix_udp(
-                        matrix, ip, port, current_packet_settings
+                        matrix, ip, port, current_packet_settings, zero_metadata
                     )
                     last_send_time = now
 
@@ -1661,6 +1884,7 @@ class FSRTransmitterApp:
                         matrix,
                         selected_unit,
                         status,
+                        zero_metadata,
                     )
                     last_ui_time = now
 
@@ -1709,9 +1933,13 @@ class FSRTransmitterApp:
         if duplicate:
             self.status.set("Cảnh báo: cả hai cổng đang gửi cùng LL hoặc cùng RR")
 
-    def _update_after_frame(self, channel_id, frame_side, matrix, unit, status):
+    def _update_after_frame(self, channel_id, frame_side, matrix, unit, status, zero_metadata=None):
         if not self.running:
             return
+        if unit != self._selected_unit:
+            return
+        if unit == 'newton' and zero_metadata is not None and not self.shoe_zero.is_current(zero_metadata):
+            return  # An older queued callback must not repaint after zero/reset.
         side_code = "LL" if frame_side == "left" else "RR"
         count = self.frame_counts[channel_id]
         self._channel_status_var(channel_id).set(f"{side_code}: đã nhận {count} frame")
@@ -1720,6 +1948,7 @@ class FSRTransmitterApp:
         self._append_chart_sample(frame_side, matrix, unit=unit)
 
     def _stream_failed(self, channel_id, device, error_message):
+        self._reset_zero('Mất kết nối: zero đã huỷ; kết nối lại rồi lấy zero')
         self.connected_channels.discard(channel_id)
         self._set_connection_panel_collapsed(False)
         self._channel_status_var(channel_id).set(f"{device}: l\u1ed7i m\u1edf c\u1ed5ng")
@@ -1732,6 +1961,7 @@ class FSRTransmitterApp:
         )
 
     def _channel_finished(self, channel_id):
+        self._reset_zero('Cổng FSR đã đóng: zero đã huỷ')
         self.active_channels.discard(channel_id)
         self.connected_channels.discard(channel_id)
         if self.running and not self.active_channels:
@@ -1821,6 +2051,7 @@ class FSRTransmitterApp:
 
     def close(self):
         self.running = False
+        self._reset_zero()
         self.stop_playback(silent=True)
         self._stop_logging("Đã đóng log")
         with self.serial_lock:
@@ -1874,7 +2105,7 @@ if __name__ == "__main__":
         messagebox.showinfo('Hiệu chỉnh sơ bộ FSR',
                             'Chỉ dùng với đúng các miếng đã đo và cùng cách lắp.\n'
                             'Chọn Newton để áp dụng. ADC và bên không nạp profile giữ nguyên.\n'
-                            'Chưa kiểm chứng toàn dải lực; chưa zero khi lắp giày.\n'
+                            'Chưa kiểm chứng toàn dải lực. Dùng nút Zero khi mang giày, chân không chịu tải.\n'
                             'Hiệu chỉnh sơ bộ; cần cân lại cả lúc tăng và giảm tải.\n'
                             'Mở với --no-calibration để trở về công thức cũ.\n'
                             + '\n'.join(notes))
