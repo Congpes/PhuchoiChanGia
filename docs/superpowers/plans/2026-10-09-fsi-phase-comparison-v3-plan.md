@@ -255,23 +255,23 @@
 - Test: `backend/test_fsi_phase_metrics.py`
 - Reference: `FSR_Transmitter_2.py` và `FSR_Transmitter_3.py`
 
-- [ ] **Step 1: Chạy test FSI mới**
+- [x] **Step 1: Chạy test FSI mới**
 
   `backend\\venv\\Scripts\\python.exe -m unittest backend.test_fsi_phase_metrics -v`
 
-- [ ] **Step 2: Chạy toàn bộ test backend**
+- [x] **Step 2: Chạy toàn bộ test backend**
 
   `backend\\venv\\Scripts\\python.exe -m unittest discover -s backend -p "test_*.py"`
 
-- [ ] **Step 3: Kiểm tra sao chép không làm đổi V2**
+- [x] **Step 3: Kiểm tra sao chép không làm đổi V2**
 
   So sánh hash hoặc diff có chủ đích của `FSR_Transmitter_2.py`; file không được thay đổi.
 
-- [ ] **Step 4: Kiểm thử dữ liệu giả lập**
+- [x] **Step 4: Kiểm thử dữ liệu giả lập**
 
   Chạy các ca: hai chân bằng nhau, một bên tải nhỏ hơn, hai chân lệch thời gian, chân vượt mép, mất gói, cả hai không tải và thiếu HO.
 
-- [ ] **Step 5: Kiểm thử bảng theo cặp và bảng tổng hợp**
+- [x] **Step 5: Kiểm thử bảng theo cặp và bảng tổng hợp**
 
   Dùng ít nhất ba cặp bước giả lập với FSI pha khác nhau; kiểm tra bảng chi tiết giữ đúng `BT1–BP1`, `BT2–BP2`, `BT3–BP3`, còn bảng tổng hợp có đúng mean, median, SD, số cặp hợp lệ và độ lệch lớn nhất từ các dòng hợp lệ. Một cặp thiếu ROI không được đi vào mẫu số tổng hợp.
 
@@ -283,7 +283,7 @@
 
   Kiểm tra cửa sổ, nút zero, ma trận, log, FSI theo pha, FSI theo vùng và cảnh báo thiếu dữ liệu không bị cắt hoặc gây nhầm.
 
-- [ ] **Step 8: Commit bản V3**
+- [x] **Step 8: Commit bản V3**
 
   ```bash
   git add FSR_Transmitter_3.py backend/fsi_phase_metrics.py backend/test_fsi_phase_metrics.py
