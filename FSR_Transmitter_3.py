@@ -625,13 +625,46 @@ class FSRTransmitterApp:
         self.main_notebook = None
         self.total_chart_tab = None
 
+        self._configure_ui_style()
         self._build_ui()
         self.refresh_com_ports()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+    def _configure_ui_style(self):
+        """Apply the FSR Gait Monitor data dense dashboard visual system."""
+        self.root.configure(background="#f8fafc")
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TFrame", background="#f8fafc")
+        style.configure("Header.TFrame", background="#1e3a8a")
+        style.configure("TLabel", background="#f8fafc", foreground="#1e3a8a", font=("Segoe UI", 9))
+        style.configure("TLabelframe", background="#ffffff", foreground="#1e3a8a", bordercolor="#dbeafe", relief="solid")
+        style.configure("TLabelframe.Label", background="#ffffff", foreground="#1e3a8a", font=("Segoe UI", 9, "bold"))
+        style.configure("TButton", background="#1e40af", foreground="#ffffff", bordercolor="#1e40af", padding=(10, 5), font=("Segoe UI", 9, "bold"))
+        style.map("TButton", background=[("active", "#3b82f6"), ("pressed", "#1e3a8a")], foreground=[("disabled", "#94a3b8")])
+        style.configure("TNotebook", background="#f8fafc", borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure("TNotebook.Tab", background="#e9eef6", foreground="#475569", padding=(16, 8), font=("Segoe UI", 9, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", "#1e40af")], foreground=[("selected", "#ffffff")])
+        style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#1e3a8a", rowheight=26, bordercolor="#dbeafe", font=("Segoe UI", 9))
+        style.configure("Treeview.Heading", background="#1e40af", foreground="#ffffff", relief="flat", font=("Segoe UI", 9, "bold"))
+        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", "#1e3a8a")])
+        style.configure("TEntry", fieldbackground="#ffffff", foreground="#1e3a8a", bordercolor="#cbd5e1", padding=5)
+        style.configure("TCombobox", fieldbackground="#ffffff", foreground="#1e3a8a", bordercolor="#cbd5e1", padding=4)
+        style.configure("Horizontal.TScale", background="#ffffff", troughcolor="#dbeafe")
+        style.configure("Header.TLabel", background="#1e3a8a", foreground="#ffffff", padding=(14, 10), font=("Segoe UI", 15, "bold"))
+        style.configure("Subheader.TLabel", background="#1e3a8a", foreground="#dbeafe", padding=(14, 0, 14, 10), font=("Segoe UI", 9))
+
     def _build_ui(self):
-        container = ttk.Frame(self.root, padding=12)
+        container = ttk.Frame(self.root, padding=14)
         container.pack(fill=tk.BOTH, expand=True)
+
+        header = ttk.Frame(container, style="Header.TFrame")
+        header.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(header, text="FSR GAIT MONITOR  /  V3", style="Header.TLabel").pack(fill=tk.X)
+        ttk.Label(header, text="Theo dõi tải hai chân · FSI theo pha · dữ liệu 48 ô", style="Subheader.TLabel").pack(fill=tk.X)
 
         connection_section = ttk.Frame(container)
         connection_section.pack(fill=tk.X)
@@ -782,12 +815,26 @@ class FSRTransmitterApp:
         self.zero_right_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(zero_controls, textvariable=self.zero_status, wraplength=560).pack(side=tk.LEFT, padx=12)
 
+        notebook = ttk.Notebook(container)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=12)
+        self.main_notebook = notebook
+
+        map_tab = ttk.Frame(notebook)
+        total_chart_tab = ttk.Frame(notebook, padding=8)
+        region_chart_tab = ttk.Frame(notebook, padding=8)
+        fsi_tab = ttk.Frame(notebook, padding=8)
+        self.total_chart_tab = total_chart_tab
+        notebook.add(map_tab, text="Bản đồ lực")
+        notebook.add(total_chart_tab, text="Tổng tải")
+        notebook.add(region_chart_tab, text="Ba vùng bàn chân")
+        notebook.add(fsi_tab, text="FSI theo pha")
+
         fsi_controls = ttk.LabelFrame(
-            container,
+            fsi_tab,
             text="FSI theo pha · vùng cố định trên 48 ô",
             padding=6,
         )
-        fsi_controls.pack(fill=tk.X, pady=(6, 0))
+        fsi_controls.pack(fill=tk.BOTH, expand=True, pady=(0, 0))
         ttk.Label(
             fsi_controls,
             text="Gót: 42,43,46,47 · Mũi: 6,7,8,10,11,12,14,15,16 · 100% = cân bằng",
@@ -825,18 +872,6 @@ class FSRTransmitterApp:
             highlightthickness=1, highlightbackground="#cbd5e1",
         )
         self.fsi_trend_canvas.pack(fill=tk.X, pady=(6, 0))
-
-        notebook = ttk.Notebook(container)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=12)
-        self.main_notebook = notebook
-
-        map_tab = ttk.Frame(notebook)
-        total_chart_tab = ttk.Frame(notebook, padding=8)
-        region_chart_tab = ttk.Frame(notebook, padding=8)
-        self.total_chart_tab = total_chart_tab
-        notebook.add(map_tab, text="Bản đồ lực")
-        notebook.add(total_chart_tab, text="Tổng tải")
-        notebook.add(region_chart_tab, text="Ba vùng bàn chân")
 
         body = ttk.Frame(map_tab)
         body.pack(fill=tk.BOTH, expand=True, pady=12)
