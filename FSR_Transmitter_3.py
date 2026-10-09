@@ -530,8 +530,8 @@ class FSRTransmitterApp:
     def __init__(self, root):
         self.root = root
         self.root.title("FSR Matrix Transmitter V3 · FSI theo pha")
-        self.root.geometry("1320x860")
-        self.root.minsize(1080, 700)
+        self.root.geometry("1280x700")
+        self.root.minsize(1000, 600)
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.serial_connections = {}
@@ -654,15 +654,15 @@ class FSRTransmitterApp:
         style.configure("TEntry", fieldbackground="#ffffff", foreground="#1e3a8a", bordercolor="#cbd5e1", padding=5)
         style.configure("TCombobox", fieldbackground="#ffffff", foreground="#1e3a8a", bordercolor="#cbd5e1", padding=4)
         style.configure("Horizontal.TScale", background="#ffffff", troughcolor="#dbeafe")
-        style.configure("Header.TLabel", background="#1e3a8a", foreground="#ffffff", padding=(14, 10), font=("Segoe UI", 15, "bold"))
-        style.configure("Subheader.TLabel", background="#1e3a8a", foreground="#dbeafe", padding=(14, 0, 14, 10), font=("Segoe UI", 9))
+        style.configure("Header.TLabel", background="#1e3a8a", foreground="#ffffff", padding=(12, 6), font=("Segoe UI", 13, "bold"))
+        style.configure("Subheader.TLabel", background="#1e3a8a", foreground="#dbeafe", padding=(12, 0, 12, 6), font=("Segoe UI", 8))
 
     def _build_ui(self):
-        container = ttk.Frame(self.root, padding=14)
+        container = ttk.Frame(self.root, padding=8)
         container.pack(fill=tk.BOTH, expand=True)
 
         header = ttk.Frame(container, style="Header.TFrame")
-        header.pack(fill=tk.X, pady=(0, 10))
+        header.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(header, text="FSR GAIT MONITOR  /  V3", style="Header.TLabel").pack(fill=tk.X)
         ttk.Label(header, text="Theo dõi tải hai chân · FSI theo pha · dữ liệu 48 ô", style="Subheader.TLabel").pack(fill=tk.X)
 
