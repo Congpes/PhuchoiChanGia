@@ -12,6 +12,8 @@ from pathlib import Path
 from statistics import median
 from tkinter import filedialog, messagebox, ttk
 
+from backend.fsr_zero import merge_zero_round, summarize_zero_round
+
 try:
     import serial
     from serial.tools import list_ports
@@ -419,19 +421,23 @@ def build_packet(device_id, side, unit, sequence, matrix):
 
 
 class ShoeZero:
-    """Session-only tare of calibrated Newton, never of raw ADC or old logs.
+    """Incremental session tare for mechanical preload in the shoe/insole.
 
-    Stability/noise limits are provisional screening settings, not accuracy
-    claims. A stable loaded foot cannot be detected: operator must unload it.
+    A lift round is operator-recorded after the insole settles. Absolute force
+    is allowed to be nonzero; only temporal instability rejects a round.
     All state is locked because two serial workers and Tk share this object.
     """
-    duration = 3.0
     fresh_seconds = 0.5
+    round_window_seconds = 0.9
+    settle_seconds = 0.1
+    buffer_seconds = 3.0
+    min_round_samples = 8
 
     def __init__(self):
         self.lock = threading.RLock()
         self.profiles = {}
         self.latest = {}
+        self.recent = {'left': deque(), 'right': deque()}
         self.pending = None
         self.revision = 0
 
@@ -439,14 +445,31 @@ class ShoeZero:
         with self.lock:
             return tuple(sorted(self.profiles)), self.pending is not None
 
+    def progress(self):
+        with self.lock:
+            return {
+                side: int(self.profiles.get(side, {}).get('round_count', 0))
+                for side in ('left', 'right')
+            }
+
     def is_current(self, metadata):
         with self.lock:
             return metadata.get('zero_revision') == self.revision
 
     def reset(self):
+        """Cancel a pending capture while retaining accepted calibration."""
+        self.cancel_pending()
+
+    def cancel_pending(self):
+        with self.lock:
+            self.pending = None
+            self.revision += 1
+
+    def clear_all(self):
         with self.lock:
             self.profiles.clear()
             self.latest.clear()
+            self.recent = {'left': deque(), 'right': deque()}
             self.pending = None
             self.revision += 1
 
@@ -460,7 +483,7 @@ class ShoeZero:
             if any(s not in self.latest or not 0 <= now-self.latest[s] <= self.fresh_seconds
                    for s in sides):
                 raise ValueError('Thiếu dữ liệu mới ở chân đã chọn. Kiểm tra kết nối FSR.')
-            self.pending = {'start': now, 'samples': {s: [] for s in sides}}
+            self.pending = {'start': now, 'sides': sides}
 
     def process(self, side, matrix, now):
         values = validate_matrix(matrix)
@@ -468,13 +491,16 @@ class ShoeZero:
             raise ValueError('Dữ liệu FSR không hữu hạn; không thể lấy zero.')
         with self.lock:
             self.latest[side] = now
-            if (self.pending is not None and side in self.pending['samples']
-                    and 0 <= now-self.pending['start'] <= self.duration):
-                self.pending['samples'][side].append((now, values))
+            recent = self.recent.setdefault(side, deque())
+            recent.append((now, [row[:] for row in values]))
+            cutoff = now - self.buffer_seconds
+            while recent and recent[0][0] < cutoff:
+                recent.popleft()
             profile = self.profiles.get(side)
             meta = {'zero_applied': profile is not None,
                     'zero_revision': self.revision,
-                    'zero_collecting': self.pending is not None}
+                    'zero_collecting': self.pending is not None,
+                    'zero_round_count': int(profile.get('round_count', 0)) if profile else 0}
             if profile is None:
                 return values, meta
             baseline, noise = profile['baseline'], profile['noise']
@@ -485,45 +511,78 @@ class ShoeZero:
                       for row, base, band in zip(values, baseline, noise)]
             meta.update(zero_baseline_n=[r[:] for r in baseline],
                         zero_noise_n=[r[:] for r in noise],
-                        zero_method='calibrated_newton_median_deadband_v1')
+                        zero_method=profile.get('method', 'lift_round_history_median_v3'),
+                        zero_redistribution_warnings=profile.get('redistribution_warnings', []))
             return result, meta
 
-    def finish(self, now):
+    def _adjacency(self, rows, columns):
+        return [
+            ((row, column), (row, column + 1))
+            for row in range(rows)
+            for column in range(columns - 1)
+        ]
+
+    def record_round(self, now):
         with self.lock:
-            pending, self.pending = self.pending, None
+            pending = self.pending
             if pending is None:
-                raise ValueError('Không có lượt lấy zero đang chạy.')
+                raise ValueError('Không có lượt calib đang chạy.')
+            summaries = {}
+            reasons = {}
+            for side in pending['sides']:
+                recent = self.recent.get(side, ())
+                start = now - self.round_window_seconds
+                end = now - self.settle_seconds
+                samples = [matrix for timestamp, matrix in recent if start <= timestamp <= end]
+                if len(samples) < self.min_round_samples:
+                    reasons[side] = 'chưa đủ mẫu ổn định. Giữ yên rồi thử lại.'
+                    continue
+                summary = summarize_zero_round(samples)
+                if not summary['accepted']:
+                    reasons[side] = f"lượt calib chưa ổn định ({summary['reason']})."
+                    continue
+                summaries[side] = summary
+
+            if reasons:
+                result = self.progress()
+                result.update(accepted=False, reasons=reasons, warnings=[])
+                return result
+
             fitted = {}
-            for side, samples in pending['samples'].items():
-                if (now-pending['start'] < self.duration or len(samples) < 20
-                        or samples[-1][0]-samples[0][0] < 2.5
-                        or now-samples[-1][0] > self.fresh_seconds
-                        or any(b[0]-a[0] > self.fresh_seconds for a, b in zip(samples, samples[1:]))):
-                    raise ValueError('Mẫu zero thiếu hoặc gián đoạn. Nhấc chân, giữ yên và thử lại.')
-                shape = [len(row) for row in samples[0][1]]
-                if any([len(row) for row in m] != shape for _, m in samples):
-                    raise ValueError('Kích thước FSR thay đổi trong lúc lấy zero.')
-                baseline, noise = [], []
-                for r, columns in enumerate(shape):
-                    base_row, noise_row = [], []
-                    for c in range(columns):
-                        data = [m[r][c] for _, m in samples]
-                        ordered = sorted(data)
-                        center = median(data)
-                        spread = ordered[int(.9*(len(data)-1))]-ordered[int(.1*(len(data)-1))]
-                        drift = abs(median(data[:len(data)//2])-median(data[len(data)//2:]))
-                        # Reject movement instead of hiding it in a large deadband.
-                        if spread > max(1.0, .2*center) or drift > max(.3, .1*center):
-                            raise ValueError(f'{side}: H{r+1}C{c+1} chưa ổn định. Giữ yên và lấy zero lại.')
-                        deviations = sorted(abs(v-center) for v in data)
-                        base_row.append(center)
-                        noise_row.append(max(.02, deviations[int(.95*(len(data)-1))]))
-                    baseline.append(base_row)
-                    noise.append(noise_row)
-                fitted[side] = {'baseline': baseline, 'noise': noise}
+            for side, summary in summaries.items():
+                matrix = summary['matrix']
+                rows, columns = len(matrix), len(matrix[0])
+                merged = merge_zero_round(
+                    self.profiles.get(side, {}).get('history', []),
+                    matrix,
+                    summary['noise'],
+                    adjacency=self._adjacency(rows, columns),
+                )
+                fitted[side] = {
+                    'baseline': merged['baseline'],
+                    'noise': merged['noise'],
+                    'history': merged['history'],
+                    'round_count': merged['round_count'],
+                    'method': merged['method'],
+                    'redistribution_warnings': merged['redistribution_warnings'],
+                    'updated_at': now,
+                }
+
             # Atomic: failure on either foot leaves all previous profiles intact.
             self.profiles.update(fitted)
+            self.pending = None
             self.revision += 1
+            result = self.progress()
+            result.update(
+                accepted=True,
+                reasons={},
+                warnings={side: fitted[side]['redistribution_warnings'] for side in fitted},
+            )
+            return result
+
+    def finish(self, now):
+        """Compatibility alias for callers that finish the current round."""
+        return self.record_round(now)
 
 
 class FSRTransmitterApp:
@@ -896,20 +955,28 @@ class FSRTransmitterApp:
         self.canvas_left = tk.Canvas(
             left_preview, background="#111827", highlightthickness=0
         )
-        self.canvas_left.pack(fill=tk.BOTH, expand=True)
+        left_preview.columnconfigure(0, weight=1)
+        left_preview.rowconfigure(0, weight=1)
+        self.canvas_left.configure(width=1, height=1)
+        self.canvas_left.grid(row=0, column=0, sticky="nsew")
+        self.canvas_left.bind("<Configure>", lambda event: self._resize_matrix("left"))
         ttk.Label(
             left_preview, textvariable=self.summary_left, anchor="w", justify=tk.LEFT
-        ).pack(fill=tk.X, pady=(6, 0))
+        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         right_preview = ttk.LabelFrame(preview_frame, text="CHÂN PHẢI (RR)", padding=5)
         right_preview.grid(row=0, column=1, padx=(4, 0), sticky="nsew")
         self.canvas_right = tk.Canvas(
             right_preview, background="#111827", highlightthickness=0
         )
-        self.canvas_right.pack(fill=tk.BOTH, expand=True)
+        right_preview.columnconfigure(0, weight=1)
+        right_preview.rowconfigure(0, weight=1)
+        self.canvas_right.configure(width=1, height=1)
+        self.canvas_right.grid(row=0, column=0, sticky="nsew")
+        self.canvas_right.bind("<Configure>", lambda event: self._resize_matrix("right"))
         ttk.Label(
             right_preview, textvariable=self.summary_right, anchor="w", justify=tk.LEFT
-        ).pack(fill=tk.X, pady=(6, 0))
+        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         self.total_chart_canvas = tk.Canvas(
             total_chart_tab,
@@ -930,7 +997,7 @@ class FSRTransmitterApp:
         self.region_chart_canvas.bind("<Configure>", self._on_chart_resize)
 
         controls = ttk.Frame(container)
-        controls.pack(fill=tk.X)
+        controls.pack(side=tk.BOTTOM, fill=tk.X, before=notebook)
         ttk.Button(controls, text="Xem ma trận", command=self.preview_manual_matrix).pack(side=tk.LEFT)
         ttk.Button(controls, text="Gửi 1 frame", command=self.send_manual_once).pack(side=tk.LEFT, padx=8)
         ttk.Label(controls, textvariable=self.status).pack(side=tk.RIGHT)
@@ -1156,11 +1223,17 @@ class FSRTransmitterApp:
         for item in self.fsi_tree.get_children():
             self.fsi_tree.delete(item)
         for row in snapshot["pairs"][-12:]:
+            metric_label = {
+                "peak": "đỉnh",
+                "mean": "TB",
+                "median": "trung vị",
+            }.get(row.get("metric"), row.get("metric", ""))
             phase_label = {
                 "contact": "Tiếp đất gót",
                 "midstance": "Pha giữa",
                 "push": "Tải mũi cuối stance",
             }.get(row["phase"], row["phase"])
+            phase_label = f"{phase_label} · {metric_label}"
             region_label = {
                 "heel": "Gót",
                 "forefoot": "Mũi",
@@ -1171,7 +1244,7 @@ class FSRTransmitterApp:
                 "--" if row["left_value"] is None else f'{row["left_value"]:.2f}',
                 "--" if row["right_value"] is None else f'{row["right_value"]:.2f}',
                 "--" if row["fsi"] is None else f'{row["fsi"]:.2f}',
-                row["quality"],
+                f'{row["quality"]} / {row.get("alignment", "--")}',
             ]
             self.fsi_tree.insert("", tk.END, values=values)
         if self.fsi_summary_tree is not None:
@@ -1184,7 +1257,10 @@ class FSRTransmitterApp:
                 )
         self._draw_fsi_trend(snapshot["pairs"])
         pair_count = len({row["pair_id"] for row in snapshot["pairs"]})
-        valid_count = sum(row["quality"] == "valid" for row in snapshot["pairs"])
+        valid_count = sum(
+            row["quality"] == "valid" and row.get("alignment") == "ok"
+            for row in snapshot["pairs"]
+        )
         if not self.fsi_roi_registered:
             self.fsi_status.set("FSI: chưa đăng ký ROI hai chân · toàn bộ 48 ô chưa dùng để tính FSI")
         else:
@@ -2128,6 +2204,7 @@ class FSRTransmitterApp:
                         selected_unit,
                         status,
                         zero_metadata,
+                        now,
                     )
                     last_ui_time = now
 
@@ -2176,7 +2253,16 @@ class FSRTransmitterApp:
         if duplicate:
             self.status.set("Cảnh báo: cả hai cổng đang gửi cùng LL hoặc cùng RR")
 
-    def _update_after_frame(self, channel_id, frame_side, matrix, unit, status, zero_metadata=None):
+    def _update_after_frame(
+        self,
+        channel_id,
+        frame_side,
+        matrix,
+        unit,
+        status,
+        zero_metadata=None,
+        sample_time=None,
+    ):
         if not self.running:
             return
         if unit != self._selected_unit:
@@ -2189,7 +2275,7 @@ class FSRTransmitterApp:
         self.status.set(status)
         self.draw_matrix(matrix, frame_side, unit)
         self._append_chart_sample(frame_side, matrix, unit=unit)
-        self._append_fsi_sample(frame_side, matrix, unit)
+        self._append_fsi_sample(frame_side, matrix, unit, sample_time)
 
     def _stream_failed(self, channel_id, device, error_message):
         self._reset_zero('Mất kết nối: zero đã huỷ; kết nối lại rồi lấy zero')
@@ -2216,6 +2302,11 @@ class FSRTransmitterApp:
             if self.log_handle is not None:
                 self._stop_logging()
 
+    def _resize_matrix(self, side):
+        state = self.preview_state[side]
+        self.draw_matrix(state.get("matrix", [[0.0] * 4 for _ in range(12)]),
+                         side, state.get("unit", self._selected_unit))
+
     def draw_matrix(self, matrix, side=None, unit=None):
         matrix = validate_matrix(matrix)
         unit = unit or self._selected_unit
@@ -2224,11 +2315,13 @@ class FSRTransmitterApp:
         canvas = self.canvas_left if side == "left" else self.canvas_right
         summary = self.summary_left if side == "left" else self.summary_right
         state = self.preview_state[side]
+        state["matrix"] = [row[:] for row in matrix]
+        state["unit"] = unit
 
         rows = len(matrix)
         columns = len(matrix[0])
-        width = max(canvas.winfo_width(), 210)
-        height = max(canvas.winfo_height(), 300)
+        width = max(canvas.winfo_width(), 1)
+        height = max(canvas.winfo_height(), 1)
 
         if (
             state["shape"] != (rows, columns)
