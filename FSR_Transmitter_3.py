@@ -609,10 +609,8 @@ class FSRTransmitterApp:
         self.smoothed_matrices = {}
         self.last_raw_matrices = {}
         self.shoe_zero = ShoeZero()
-        self.zero_after_id = None
-        self.zero_started_at = None
-        self.zero_button_text = tk.StringVar(value='Zero hết')
-        self.zero_status = tk.StringVar(value='Chưa zero · chỉ áp dụng dữ liệu trực tiếp (Newton)')
+        self.zero_button_text = tk.StringVar(value='Calib/Zero cả hai chân')
+        self.zero_status = tk.StringVar(value='Chưa calib nền · chỉ áp dụng dữ liệu trực tiếp (Newton)')
         self.chart_history = {
             "left": deque(maxlen=CHART_MAX_POINTS),
             "right": deque(maxlen=CHART_MAX_POINTS),
@@ -866,10 +864,18 @@ class FSRTransmitterApp:
         zero_controls.pack(fill=tk.X, pady=(6, 0))
         ttk.Button(zero_controls, textvariable=self.zero_button_text,
                    command=self._toggle_zero).pack(side=tk.LEFT)
-        self.zero_left_button = ttk.Button(zero_controls, text='Zero chân trái',
+        self.zero_record_button = ttk.Button(zero_controls, text='Ghi lượt',
+                                             command=self._record_zero_round,
+                                             state='disabled')
+        self.zero_record_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.zero_clear_button = ttk.Button(zero_controls, text='Xóa hết',
+                                            command=self._clear_all_zero,
+                                            state='disabled')
+        self.zero_clear_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.zero_left_button = ttk.Button(zero_controls, text='Calib chân trái',
                                           command=lambda: self._start_zero(('left',)))
         self.zero_left_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.zero_right_button = ttk.Button(zero_controls, text='Zero chân phải',
+        self.zero_right_button = ttk.Button(zero_controls, text='Calib chân phải',
                                            command=lambda: self._start_zero(('right',)))
         self.zero_right_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(zero_controls, textvariable=self.zero_status, wraplength=560).pack(side=tk.LEFT, padx=12)
@@ -1024,30 +1030,21 @@ class FSRTransmitterApp:
 
     def _refresh_zero_controls(self):
         sides, pending = self.shoe_zero.state()
-        self.zero_button_text.set('Huỷ zero' if sides or pending else 'Zero hết')
+        self.zero_button_text.set('Hủy lượt đang ghi' if pending else 'Calib/Zero cả hai chân')
         for button in (self.zero_left_button, self.zero_right_button):
             button.configure(state='disabled' if pending else 'normal')
+        self.zero_record_button.configure(state='normal' if pending else 'disabled')
+        self.zero_clear_button.configure(state='normal' if sides else 'disabled')
 
-    def _reset_zero(self, reason='Đã huỷ zero · trở về lực trước zero'):
-        sides, pending = self.shoe_zero.state()
-        if self.zero_after_id is not None:
-            self.root.after_cancel(self.zero_after_id)
-            self.zero_after_id = None
+    def _reset_zero(self, reason='Đã hủy lượt calib · baseline cũ vẫn được giữ'):
         self.shoe_zero.reset()
-        if sides or pending:
-            self.clear_charts()
         self.zero_status.set(reason)
         self._refresh_zero_controls()
 
     def _toggle_zero(self):
         sides, pending = self.shoe_zero.state()
-        if sides or pending:
+        if pending:
             self._reset_zero()
-            self.clear_charts()
-            # Restore the current display without waiting for a new frame.
-            for side, raw in list(self.last_raw_matrices.items()):
-                self.draw_matrix(matrix_for_unit(raw, self._selected_unit, side),
-                                 side, self._selected_unit)
         else:
             self._start_zero(('left', 'right'))
 
@@ -1057,42 +1054,58 @@ class FSRTransmitterApp:
             return
         label = 'cả hai chân' if len(sides) == 2 else ('chân trái' if sides[0] == 'left' else 'chân phải')
         if not messagebox.askokcancel('Lấy zero khi mang giày',
-                f'Ngồi vững, nhấc {label} khỏi sàn và giữ yên.\n'
-                'Không đứng chịu tải khi bấm zero. Phần mềm không tự nhận biết chân đang chịu tải.\n'
-                'Bấm OK khi đã sẵn sàng; thu mẫu khoảng 3 giây.', parent=self.root):
+                f'Ngồi vững, nhấc {label} khỏi sàn và chờ lót giày bớt dao động.\n'
+                'Khi ổn định, bấm “Ghi lượt”. Lực nền khác 0 vẫn được chấp nhận.\n'
+                'Có thể lặp lại nhiều lượt; lượt cũ chỉ mất khi bấm “Xóa hết”.', parent=self.root):
             return
         try:
-            self.zero_started_at = time.monotonic()
-            self.shoe_zero.start(sides, self.zero_started_at)
+            self.shoe_zero.start(sides, time.monotonic())
         except ValueError as exc:
             self.zero_status.set(str(exc))
             return
+        self.zero_status.set(f'Đang chờ ghi lượt · nhấc {label}, chờ lót giày ổn định rồi bấm Ghi lượt')
         self._refresh_zero_controls()
-        self._poll_zero()
 
-    def _poll_zero(self):
-        self.zero_after_id = None
-        if not self.shoe_zero.state()[1]:
-            return
-        now = time.monotonic()
-        remaining = self.shoe_zero.duration-(now-self.zero_started_at)
-        if remaining > 0:
-            self.zero_status.set(f'Đang lấy zero: còn {remaining:.1f}s · giữ chân khỏi sàn')
-            self.zero_after_id = self.root.after(100, self._poll_zero)
-            return
+    def _record_zero_round(self):
         try:
-            self.shoe_zero.finish(now)
-            sides, _ = self.shoe_zero.state()
-            labels = ', '.join('trái' if s == 'left' else 'phải' for s in sides)
-            self.zero_status.set(f'Đã zero: {labels} · đang hiển thị lực tăng thêm')
-            self.clear_charts()
+            result = self.shoe_zero.record_round(time.monotonic())
         except ValueError as exc:
-            retained = ' · Zero cũ vẫn giữ' if self.shoe_zero.state()[0] else ''
-            self.zero_status.set(f'Không lấy được zero: {exc}{retained}')
+            self.zero_status.set(str(exc))
+            return
+        if not result.get('accepted'):
+            details = '; '.join(
+                f'{side}: {reason}' for side, reason in result.get('reasons', {}).items()
+            )
+            self.zero_status.set(f'Lượt calib chưa được ghi · {details}')
+            self._refresh_zero_controls()
+            return
+        counts = result.get('left', 0), result.get('right', 0)
+        warnings = [
+            side for side, rows in result.get('warnings', {}).items() if rows
+        ]
+        warning_text = f' · cảnh báo chuyển tải: {", ".join(warnings)}' if warnings else ''
+        self.zero_status.set(
+            f'Đã ghi lượt calib · trái {counts[0]} lượt · phải {counts[1]} lượt{warning_text}'
+        )
+        self.clear_charts()
+        self._refresh_zero_controls()
+
+    def _clear_all_zero(self):
+        sides, pending = self.shoe_zero.state()
+        if not sides and not pending:
+            return
+        if not messagebox.askyesno(
+                'Xóa toàn bộ calib nền',
+                'Xóa tất cả các lượt calib nền đã ghi cho hai chân?',
+                parent=self.root):
+            return
+        self.shoe_zero.clear_all()
+        self.clear_charts()
+        self.zero_status.set('Đã xóa toàn bộ calib nền · trở về lực trước zero')
         self._refresh_zero_controls()
 
     def _on_unit_change(self, *_args):
-        self._reset_zero('Đổi đơn vị: zero đã huỷ')
+        self._reset_zero('Đổi đơn vị · lượt calib đang ghi đã hủy, baseline được giữ')
         selected = self.unit.get().strip().lower()
         self._selected_unit = selected if selected in ('raw_adc', 'newton') else 'raw_adc'
         self.clear_charts()
@@ -1115,7 +1128,7 @@ class FSRTransmitterApp:
 
     def _on_alpha_change(self, value):
         if hasattr(self, 'zero_left_button'):
-            self._reset_zero('Đổi bộ lọc: cần lấy zero lại')
+            self._reset_zero('Đổi bộ lọc · lượt calib đang ghi đã hủy, baseline được giữ')
         self.ema_alpha_value = min(max(float(value), 0.01), 1.0)
         self.ema_label_text.set(f'EMA alpha: {self.ema_alpha_value:.2f}')
 
@@ -2018,7 +2031,7 @@ class FSRTransmitterApp:
         self.stop_playback(silent=True)
         self.clear_charts()
         self._reset_fsi()
-        self._reset_zero('Kết nối mới: chưa lấy zero')
+        self._reset_zero('Kết nối mới · baseline calib được giữ, có thể ghi thêm lượt')
         self.running = True
         self.smoothed_matrices.clear()
         self.last_raw_matrices.clear()
@@ -2053,7 +2066,7 @@ class FSRTransmitterApp:
 
     def _stop_stream(self, status_text=None):
         self.running = False
-        self._reset_zero('Đã ngắt FSR: zero đã huỷ')
+        self._reset_zero('Đã ngắt FSR · baseline calib được giữ')
         self._reset_fsi()
         self.smoothed_matrices.clear()
         with self.serial_lock:
@@ -2278,7 +2291,7 @@ class FSRTransmitterApp:
         self._append_fsi_sample(frame_side, matrix, unit, sample_time)
 
     def _stream_failed(self, channel_id, device, error_message):
-        self._reset_zero('Mất kết nối: zero đã huỷ; kết nối lại rồi lấy zero')
+        self._reset_zero('Mất kết nối · baseline calib được giữ; kết nối lại để ghi tiếp')
         self.connected_channels.discard(channel_id)
         self._set_connection_panel_collapsed(False)
         self._channel_status_var(channel_id).set(f"{device}: l\u1ed7i m\u1edf c\u1ed5ng")
@@ -2291,7 +2304,7 @@ class FSRTransmitterApp:
         )
 
     def _channel_finished(self, channel_id):
-        self._reset_zero('Cổng FSR đã đóng: zero đã huỷ')
+        self._reset_zero('Cổng FSR đã đóng · baseline calib được giữ')
         self.active_channels.discard(channel_id)
         self.connected_channels.discard(channel_id)
         if self.running and not self.active_channels:
