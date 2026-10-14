@@ -511,7 +511,8 @@ class ShoeZero:
                       for row, base, band in zip(values, baseline, noise)]
             meta.update(zero_baseline_n=[r[:] for r in baseline],
                         zero_noise_n=[r[:] for r in noise],
-                        zero_method=profile.get('method', 'lift_round_history_median_v3'),
+                        zero_method=profile.get('method', 'lift_round_history_max_v4'),
+                        zero_median_baseline_n=[r[:] for r in profile.get('median_baseline', baseline)],
                         zero_redistribution_warnings=profile.get('redistribution_warnings', []))
             return result, meta
 
@@ -560,6 +561,7 @@ class ShoeZero:
                 )
                 fitted[side] = {
                     'baseline': merged['baseline'],
+                    'median_baseline': merged['median_baseline'],
                     'noise': merged['noise'],
                     'history': merged['history'],
                     'round_count': merged['round_count'],

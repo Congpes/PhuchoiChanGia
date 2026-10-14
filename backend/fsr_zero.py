@@ -123,11 +123,17 @@ def merge_zero_round(
     current_history.append({"matrix": deepcopy(round_matrix), "noise": deepcopy(round_noise)})
 
     baseline = [[0.0] * columns for _ in range(rows)]
+    median_baseline = [[0.0] * columns for _ in range(rows)]
     noise = [[0.02] * columns for _ in range(rows)]
     for row in range(rows):
         for column in range(columns):
             values = [float(entry["matrix"][row][column]) for entry in current_history]
-            baseline[row][column] = float(median(values))
+            median_baseline[row][column] = float(median(values))
+            # The active prototype policy is conservative: use the maximum
+            # of each round's robust representative.  The round itself has
+            # already used a median, so an isolated raw-frame spike cannot
+            # become the baseline.
+            baseline[row][column] = max(values)
             round_noise_values = [float(entry["noise"][row][column]) for entry in current_history]
             variation = median(abs(value - baseline[row][column]) for value in values)
             noise[row][column] = max(0.02, max(round_noise_values), float(variation))
@@ -155,8 +161,9 @@ def merge_zero_round(
     return {
         "history": current_history,
         "baseline": baseline,
+        "median_baseline": median_baseline,
         "noise": noise,
         "round_count": len(current_history),
-        "method": "lift_round_history_median_v3",
+        "method": "lift_round_history_max_v4",
         "redistribution_warnings": warnings,
     }

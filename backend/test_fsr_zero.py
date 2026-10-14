@@ -34,7 +34,7 @@ class ZeroRoundStatisticsTests(unittest.TestCase):
         self.assertFalse(result["accepted"])
         self.assertIn("drift", result["reason"])
 
-    def test_incremental_merge_keeps_history_and_uses_median(self):
+    def test_incremental_merge_keeps_history_and_uses_max_round_baseline(self):
         first = matrix(5.0)
         first[0][1] = 6.0
         second = matrix(6.0)
@@ -46,9 +46,10 @@ class ZeroRoundStatisticsTests(unittest.TestCase):
 
         self.assertEqual(result["round_count"], 2)
         self.assertEqual(len(result["history"]), 2)
-        self.assertAlmostEqual(result["baseline"][0][0], 5.5)
-        self.assertAlmostEqual(result["baseline"][0][1], 4.5)
-        self.assertNotEqual(result["baseline"][0][0] + result["baseline"][0][1], 12.0)
+        self.assertAlmostEqual(result["baseline"][0][0], 6.0)
+        self.assertAlmostEqual(result["baseline"][0][1], 6.0)
+        self.assertEqual(result["median_baseline"][0][0], 5.5)
+        self.assertEqual(result["median_baseline"][0][1], 4.5)
         self.assertTrue(result["redistribution_warnings"])
 
     def test_merge_does_not_mutate_existing_history(self):
@@ -83,14 +84,15 @@ class ShoeZeroStateTests(unittest.TestCase):
         self.assertEqual(progress["left"], 1)
         self.assertAlmostEqual(zero.profiles["left"]["baseline"][0][0], 5.0)
 
-    def test_second_click_recomputes_median_and_keeps_history(self):
+    def test_second_click_recomputes_max_and_keeps_history(self):
         zero = ShoeZero()
 
         self._record(zero, 5.0, 0.0)
         self._record(zero, 6.0, 2.0)
 
         self.assertEqual(zero.progress()["left"], 2)
-        self.assertAlmostEqual(zero.profiles["left"]["baseline"][0][0], 5.5)
+        self.assertAlmostEqual(zero.profiles["left"]["baseline"][0][0], 6.0)
+        self.assertAlmostEqual(zero.profiles["left"]["median_baseline"][0][0], 5.5)
 
     def test_unstable_click_does_not_change_profile_or_count(self):
         zero = ShoeZero()
