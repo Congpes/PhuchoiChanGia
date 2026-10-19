@@ -27,6 +27,7 @@ from camera_fusion import (
 from pose_identity_lock import PoseIdentityLock
 from performance_metrics import PerformanceMonitor
 from camera_preview import PreviewJpegCache
+from pose_runtime import create_cpu_pose
 from pose_angle_overlay import draw_joint_angle_labels
 from pose_quality import assess_pose_sample, assess_temporal_consistency
 from stereo_calibration import StereoCalibrationError, StereoCalibrationManager
@@ -70,6 +71,9 @@ POSE_REACQUIRE_INTERVAL = min(
 )
 POSE_TARGET_FPS = min(30.0, max(8.0, float(os.getenv('CAMERA_POSE_FPS', '12'))))
 POSE_MODEL_COMPLEXITY = min(2, max(0, int(os.getenv('CAMERA_POSE_MODEL_COMPLEXITY', '1'))))
+# Opt-in until paired live measurements establish the best thread budget.
+# 0 retains the installed MediaPipe scheduler; 1..4 bounds each Pose graph.
+POSE_GRAPH_THREADS = min(4, max(0, int(os.getenv('CAMERA_POSE_GRAPH_THREADS', '0'))))
 POSE_DETECTION_CONFIDENCE = min(0.95, max(0.3, float(os.getenv('CAMERA_POSE_DETECTION_CONFIDENCE', '0.50'))))
 POSE_TRACKING_CONFIDENCE = min(0.95, max(0.3, float(os.getenv('CAMERA_POSE_TRACKING_CONFIDENCE', '0.45'))))
 # Preview has its own budget; analysis/calibration and raw archives stay native.
@@ -137,6 +141,7 @@ live_gait_samples = deque(maxlen=3600)
 live_gait_lock = threading.Lock()
 gait_store_lock = threading.Lock()
 camera_synchronizer = DualCameraSynchronizer(CAMERA_SYNC_TOLERANCE_MS)
+camera_pose_output_lock = threading.Lock()
 stereo_calibration = StereoCalibrationManager(
     os.getenv(
         "CAMERA_STEREO_CALIBRATION_PATH",
@@ -460,13 +465,11 @@ def landmark_positions(landmarks):
 
 
 def create_pose_detector():
-    return mp_pose.Pose(
-        static_image_mode=False,
+    return create_cpu_pose(
         model_complexity=POSE_MODEL_COMPLEXITY,
-        smooth_landmarks=False,
-        enable_segmentation=False,
         min_detection_confidence=POSE_DETECTION_CONFIDENCE,
         min_tracking_confidence=POSE_TRACKING_CONFIDENCE,
+        graph_threads=POSE_GRAPH_THREADS,
     )
 
 
@@ -690,7 +693,31 @@ def submit_camera_pose(
         "physicalSlot": int(physical_slot),
         "imageSize": [int(width), int(height)],
     }
-    for output in camera_synchronizer.submit(logical_view, observation):
+    with camera_pose_output_lock:
+        _consume_camera_pose_outputs(camera_synchronizer.submit(logical_view, observation))
+
+
+def flush_camera_pose_results():
+    """Release bounded-wait fallbacks even when either view stops detecting."""
+    if SINGLE_CAMERA_MODE:
+        return
+    with camera_pose_output_lock:
+        _consume_camera_pose_outputs(camera_synchronizer.drain())
+
+
+def finalize_camera_pose_recording():
+    """Settle completed-but-unpaired results before closing recorded storage."""
+    global is_recording
+    with camera_pose_output_lock:
+        if not SINGLE_CAMERA_MODE:
+            _consume_camera_pose_outputs(camera_synchronizer.drain(force=True))
+        is_recording = False
+
+
+def _consume_camera_pose_outputs(outputs):
+    # Serialize fusion/store as well as dequeue so camera workers cannot store
+    # successive sagittal samples in reverse order after asymmetric inference.
+    for output in outputs:
         sagittal = output["sagittal"]
         sample = sagittal.get("sample")
         if sample is None:
@@ -1015,14 +1042,14 @@ def camera_capture_loop_0():
                 camera_health_0.update(capture_properties(cap))
             time.sleep(0.03)
             continue
+        captured_ns = int(read_completed * 1_000_000_000)
+        frame_at = time.time()
         performance_monitor.record_stage(
             "camera.0.read",
             read_completed - read_started,
             event_at=read_completed,
         )
         read_failures = 0
-        captured_ns = time.perf_counter_ns()
-        frame_at = time.time()
         if frame_at - last_quality_at >= 0.5:
             camera_health_0.update(frame_quality_metrics(frame))
             camera_health_0.update({
@@ -1055,6 +1082,10 @@ def camera_loop_0():
     missed_pose_frames = 0
     print("[Camera 0] frontal pose thread started.")
     while running and not camera_stop_event.is_set():
+        try:
+            flush_camera_pose_results()
+        except Exception as exc:
+            record_camera_error(camera_health_0, "camera_fusion", exc)
         with frame_lock_0:
             sequence = latest_capture_sequence_0
             if latest_raw_frame_0 is None or sequence == last_sequence:
@@ -1074,6 +1105,8 @@ def camera_loop_0():
         h, w, _ = frame.shape
         pose_frame = prepare_pose_frame(frame, missed_pose_frames)
         rgb = cv2.cvtColor(pose_frame, cv2.COLOR_BGR2RGB)
+        # MediaPipe can borrow a read-only RGB buffer instead of copying it.
+        rgb.flags.writeable = False
         pose_process_started = time.perf_counter()
         try:
             results = pose.process(rgb)
@@ -1169,6 +1202,16 @@ def camera_loop_0():
                 pose_times_0.append(time.time())
                 if pose_quality and pose_quality.get("frameReliable"):
                     pose_reliable_times_0.append(time.time())
+        pipeline_completed = time.perf_counter()
+        performance_monitor.record_stage(
+            "camera.0.pose_postprocess", pipeline_completed - pose_process_completed,
+            event_at=pipeline_completed,
+        )
+        performance_monitor.record_stage(
+            "camera.0.pose_pipeline", pipeline_completed - inference_started,
+            event_at=pipeline_completed,
+            latency_seconds=pipeline_completed - captured_ns / 1_000_000_000.0,
+        )
         remaining = max(
             CAMERA_FRAME_DELAY_SECONDS,
             1.0 / POSE_TARGET_FPS - (time.perf_counter() - inference_started),
@@ -1214,14 +1257,14 @@ def camera_capture_loop_1():
                 camera_health_1.update(capture_properties(cap))
             time.sleep(0.05)
             continue
+        captured_ns = int(read_completed * 1_000_000_000)
+        frame_at = time.time()
         performance_monitor.record_stage(
             "camera.1.read",
             read_completed - read_started,
             event_at=read_completed,
         )
         read_failures = 0
-        captured_ns = time.perf_counter_ns()
-        frame_at = time.time()
         if frame_at - last_quality_at >= 0.5:
             camera_health_1.update(frame_quality_metrics(frame))
             camera_health_1.update({
@@ -1255,6 +1298,10 @@ def camera_loop_1():
     missed_pose_frames = 0
     print("[Camera 1] sagittal pose thread started.")
     while running and not camera_stop_event.is_set():
+        try:
+            flush_camera_pose_results()
+        except Exception as exc:
+            record_camera_error(camera_health_1, "camera_fusion", exc)
         with frame_lock_1:
             sequence = latest_capture_sequence_1
             if latest_raw_frame_1 is None or sequence == last_sequence:
@@ -1272,6 +1319,7 @@ def camera_loop_1():
         h, w, _ = frame.shape
         pose_frame = prepare_pose_frame(frame, missed_pose_frames)
         rgb = cv2.cvtColor(pose_frame, cv2.COLOR_BGR2RGB)
+        rgb.flags.writeable = False
         pose_process_started = time.perf_counter()
         try:
             results = pose.process(rgb)
@@ -1375,6 +1423,16 @@ def camera_loop_1():
                 pose_times_1.append(time.time())
                 if pose_quality and pose_quality.get("frameReliable"):
                     pose_reliable_times_1.append(time.time())
+        pipeline_completed = time.perf_counter()
+        performance_monitor.record_stage(
+            "camera.1.pose_postprocess", pipeline_completed - pose_process_completed,
+            event_at=pipeline_completed,
+        )
+        performance_monitor.record_stage(
+            "camera.1.pose_pipeline", pipeline_completed - inference_started,
+            event_at=pipeline_completed,
+            latency_seconds=pipeline_completed - captured_ns / 1_000_000_000.0,
+        )
         remaining = max(
             CAMERA_FRAME_DELAY_SECONDS,
             1.0 / POSE_TARGET_FPS - (time.perf_counter() - inference_started),
@@ -2003,7 +2061,7 @@ def start_recording(
 def stop_recording_endpoint():
     global is_recording
     if is_recording:
-        is_recording = False
+        finalize_camera_pose_recording()
         save_recorded_data_to_db()
         return {"status": "stopped"}
     return {"status": "not_recording"}

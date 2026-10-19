@@ -12,6 +12,17 @@ from camera_fusion import (
 )
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 def _landmarks(*, hip_drop=0.0, hip_width=0.24):
     center = 0.5
     return {
@@ -126,7 +137,7 @@ class CameraFusionTests(unittest.TestCase):
         self.assertTrue(fused["cameraFusion"]["cameraRolesPlausible"])
 
     def test_synchronizer_pairs_out_of_order_arrivals(self):
-        sync = DualCameraSynchronizer(max_skew_ms=40)
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=FakeClock())
         sagittal = {"captured_ns": 1_000_000_000, "sample": {}}
         self.assertEqual(sync.submit("sagittal", sagittal), [])
         outputs = sync.submit("frontal", {"captured_ns": 1_012_000_000})
@@ -134,22 +145,183 @@ class CameraFusionTests(unittest.TestCase):
         self.assertEqual(outputs[0]["kind"], "paired")
         self.assertAlmostEqual(outputs[0]["syncErrorMs"], 12.0)
 
+    def test_synchronizer_retains_pair_when_sagittal_inference_finishes_first(self):
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=FakeClock())
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_000_000_000}), [])
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_100_000_000}), [])
+
+        first = sync.submit("frontal", {"captured_ns": 1_005_000_000})
+        second = sync.submit("frontal", {"captured_ns": 1_105_000_000})
+
+        self.assertEqual([item["kind"] for item in first + second], ["paired", "paired"])
+        self.assertEqual(
+            [item["sagittal"]["captured_ns"] for item in first + second],
+            [1_000_000_000, 1_100_000_000],
+        )
+        self.assertEqual([item["syncErrorMs"] for item in first + second], [5.0, 5.0])
+
     def test_synchronizer_releases_unpaired_sagittal_sample(self):
-        sync = DualCameraSynchronizer(max_skew_ms=40)
-        sync.submit("sagittal", {"captured_ns": 1_000_000_000, "sample": {}})
-        outputs = sync.submit("sagittal", {"captured_ns": 1_050_000_000, "sample": {}})
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_000_000_000}), [])
+        clock.advance(0.05)
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_050_000_000}), [])
+        clock.advance(0.199)
+        self.assertEqual(sync.drain(), [])
+        clock.advance(0.001)
+        outputs = sync.drain()
+        self.assertEqual(len(outputs), 1)
         self.assertEqual(outputs[0]["kind"], "fallback")
+        self.assertEqual(outputs[0]["sagittal"]["captured_ns"], 1_000_000_000)
+        self.assertEqual(sync.drain(), [])
+        clock.advance(0.05)
+        remaining = sync.drain()
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["sagittal"]["captured_ns"], 1_050_000_000)
+        self.assertEqual(sync.drain(), [])
         fallback = sagittal_fallback_sample(
             {"poseQuality": {"frameReliable": True}},
             single_camera=False,
         )
         self.assertFalse(fallback["poseQuality"]["frameReliable"])
 
+    def test_synchronizer_arrival_wait_preserves_strict_capture_tolerance(self):
+        for delta_ms in (-41, -40, 40, 41):
+            with self.subTest(delta_ms=delta_ms):
+                clock = FakeClock()
+                sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+                sync.submit("sagittal", {"captured_ns": 1_000_000_000})
+                clock.advance(0.2)
+                outputs = sync.submit("frontal", {
+                    "captured_ns": 1_000_000_000 + delta_ms * 1_000_000,
+                })
+                clock.advance(0.05)
+                outputs.extend(sync.drain())
+                self.assertEqual(len(outputs), 1)
+                self.assertEqual(
+                    outputs[0]["kind"], "paired" if abs(delta_ms) <= 40 else "fallback",
+                )
+                if outputs[0]["kind"] == "paired":
+                    self.assertEqual(outputs[0]["syncErrorMs"], abs(delta_ms))
+
+    def test_synchronizer_frontal_watermark_releases_without_arrival_timeout(self):
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+        sync.submit("sagittal", {"captured_ns": 1_000_000_000})
+        outputs = sync.submit("frontal", {"captured_ns": 1_041_000_000})
+        self.assertEqual(outputs, [{
+            "kind": "fallback", "sagittal": {"captured_ns": 1_000_000_000},
+        }])
+        self.assertEqual(clock.now, 0.0)
+
+    def test_synchronizer_waits_for_closer_future_frontal_candidate(self):
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=FakeClock())
+        sync.submit("frontal", {"captured_ns": 980_000_000})
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_000_000_000}), [])
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_100_000_000}), [])
+        outputs = sync.submit("frontal", {"captured_ns": 1_005_000_000})
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(outputs[0]["kind"], "paired")
+        self.assertEqual(outputs[0]["frontal"]["captured_ns"], 1_005_000_000)
+        self.assertEqual(outputs[0]["syncErrorMs"], 5.0)
+
+    def test_synchronizer_timeout_pairs_earlier_candidate_without_reusing_it(self):
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+        sync.submit("frontal", {"captured_ns": 990_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_000_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_001_000_000})
+        clock.advance(0.25)
+        outputs = sync.drain()
+        self.assertEqual([item["kind"] for item in outputs], ["paired", "fallback"])
+        self.assertEqual(outputs[0]["syncErrorMs"], 10.0)
+        self.assertEqual(outputs[1]["sagittal"]["captured_ns"], 1_001_000_000)
+        self.assertEqual(sync.drain(), [])
+        self.assertEqual(sync.status()["pairedSamples"], 1)
+        self.assertEqual(sync.status()["fallbackSamples"], 1)
+
+    def test_synchronizer_force_drain_settles_pending_without_wait_or_reuse(self):
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+        sync.submit("frontal", {"captured_ns": 980_000_000})
+        sync.submit("frontal", {"captured_ns": 990_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_000_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_001_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_002_000_000})
+        self.assertEqual(sync.drain(), [])
+
+        outputs = sync.drain(force=True)
+
+        self.assertEqual(clock.now, 0.0)
+        self.assertEqual([item["kind"] for item in outputs], ["paired", "paired", "fallback"])
+        self.assertEqual(
+            [item["frontal"]["captured_ns"] for item in outputs[:2]],
+            [990_000_000, 980_000_000],
+        )
+        self.assertEqual([item["syncErrorMs"] for item in outputs[:2]], [10.0, 21.0])
+        self.assertEqual(sync.drain(force=True), [])
+        self.assertEqual(sync.status()["pairedSamples"], 2)
+        self.assertEqual(sync.status()["fallbackSamples"], 1)
+
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 1_100_000_000}), [])
+        clock.advance(0.249)
+        self.assertEqual(sync.drain(), [])
+        clock.advance(0.001)
+        remaining = sync.drain()
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["kind"], "fallback")
+
+    def test_synchronizer_queue_capacity_conserves_sagittal_samples(self):
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, queue_size=4, clock=clock)
+        outputs = []
+        captures = [1_000_000_000 + index * 10_000_000 for index in range(12)]
+        for captured_ns in captures:
+            outputs.extend(sync.submit("sagittal", {"captured_ns": captured_ns}))
+            self.assertLessEqual(len(sync._sagittal), 4)
+            self.assertEqual(len(sync._sagittal_deadlines), len(sync._sagittal))
+        self.assertEqual(len(outputs), 8)
+        clock.advance(0.25)
+        outputs.extend(sync.drain())
+        self.assertEqual([item["sagittal"]["captured_ns"] for item in outputs], captures)
+        self.assertTrue(all(item["kind"] == "fallback" for item in outputs))
+        self.assertEqual(sync.status()["fallbackSamples"], len(captures))
+        self.assertEqual(sync.drain(), [])
+        for captured_ns in captures:
+            sync.submit("frontal", {"captured_ns": captured_ns})
+            self.assertLessEqual(len(sync._front), 4)
+
+    def test_synchronizer_reset_clears_pending_deadlines_and_frontal_watermark(self):
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
+        sync.submit("sagittal", {"captured_ns": 1_000_000_000})
+        sync.submit("frontal", {"captured_ns": 1_005_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_100_000_000})
+        sync.submit("frontal", {"captured_ns": 1_200_000_000})
+        sync.submit("sagittal", {"captured_ns": 1_300_000_000})
+        sync.reset()
+        status = sync.status()
+        self.assertEqual(status["pairedSamples"], 0)
+        self.assertEqual(status["fallbackSamples"], 0)
+        self.assertEqual(status["recentPairedSamples"], 0)
+        self.assertEqual(status["recentFallbackSamples"], 0)
+        self.assertIsNone(status["lastErrorMs"])
+        self.assertFalse(status["synchronized"])
+        clock.advance(0.25)
+        self.assertEqual(sync.drain(), [])
+        self.assertEqual(sync.submit("sagittal", {"captured_ns": 100_000_000}), [])
+        outputs = sync.submit("frontal", {"captured_ns": 105_000_000})
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(outputs[0]["kind"], "paired")
+
     def test_synchronizer_recent_ratio_recovers_after_startup_misses(self):
-        sync = DualCameraSynchronizer(max_skew_ms=40)
+        clock = FakeClock()
+        sync = DualCameraSynchronizer(max_skew_ms=40, clock=clock)
         captured_ns = 1_000_000_000
         for _ in range(70):
             sync.submit("sagittal", {"captured_ns": captured_ns, "sample": {}})
+            clock.advance(0.05)
+            sync.drain()
             captured_ns += 50_000_000
         for _ in range(60):
             sync.submit("sagittal", {"captured_ns": captured_ns, "sample": {}})

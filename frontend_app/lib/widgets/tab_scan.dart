@@ -271,14 +271,12 @@ class _TabScanState extends State<TabScan> {
     }
     try {
       final response = await http
-          .get(Uri.parse('http://127.0.0.1:8000/gait/steps?window=5'))
+          .get(Uri.parse('http://127.0.0.1:8000/gait/lateral-trunk-feedback'))
           .timeout(const Duration(milliseconds: 1200));
       if (response.statusCode != 200 || !mounted) return;
       final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final feedback = body['lateralTrunkFeedback'];
       setState(() {
-        _lateralTrunkFeedback =
-            feedback is Map ? Map<String, dynamic>.from(feedback) : null;
+        _lateralTrunkFeedback = body;
       });
     } catch (_) {
       // A brief backend interruption must not cover the camera preview.

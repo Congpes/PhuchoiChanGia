@@ -316,6 +316,7 @@ class RecordingArchiveTests(unittest.TestCase):
         state.CAMERA_REQUEST_WIDTH = 1280
         state.CAMERA_REQUEST_HEIGHT = 720
         state.CAMERA_REQUEST_FPS = 20.0
+        state.POSE_GRAPH_THREADS = 1
         state.camera_health_0 = {
             "reportedWidth": 1280,
             "reportedHeight": 720,
@@ -361,6 +362,7 @@ class RecordingArchiveTests(unittest.TestCase):
         self.assertEqual(report["stages"]["camera.0.read"]["count"], 1)
         self.assertEqual(report["runtimeConfiguration"]["fsrBaudrate"], 9600)
         runtime = report["runtimeConfiguration"]
+        self.assertEqual(runtime["poseGraphThreads"], 1)
         preview = runtime['previewMeasurement']
         self.assertEqual(preview['rateMeaning'], 'unique_successful_encodes_per_physical_stream')
         self.assertEqual(preview['jpegCache']['encodes'], 1)
@@ -456,6 +458,28 @@ class RecordingArchiveTests(unittest.TestCase):
         self.assertEqual(status['processingErrorCount'], 1)
         self.assertEqual(status['rawFrameCount'], 2)
         self.assertEqual(status['frameCount'], 1)
+
+    def test_archive_finalizes_pending_pose_before_disabling_storage(self):
+        app, state = FastAPI(), self._state()
+        observed_recording = []
+
+        def finalize_pending():
+            observed_recording.append(state.is_recording)
+            state.recorded_timestamps.append(.01)
+            state.is_recording = False
+
+        state.finalize_camera_pose_recording = finalize_pending
+        with (
+            mock.patch.object(realtime_services.cv2, 'VideoWriter', _FakeWriter),
+            mock.patch.object(realtime_services.threading.Thread, 'start'),
+            mock.patch.dict(os.environ, {'GAIT_RECORDINGS_DIR': self.recordings_dir.name}),
+        ):
+            realtime_services.install_realtime_services(app, state)
+            self._endpoint(app, '/recording/start', 'POST')('s-record', 'LEFT', 'RIGHT')
+            self._endpoint(app, '/recording/stop', 'POST')()
+        self.assertEqual(observed_recording, [True])
+        self.assertEqual(state.recorded_timestamps, [.01])
+        self.assertFalse(state.is_recording)
 
     def test_video_only_clip_is_persisted_and_archive_is_completed(self):
         app = FastAPI()
@@ -1280,6 +1304,90 @@ class RecordingArchiveTests(unittest.TestCase):
             advanced["cycles"][-1]["pairIndex"],
             first["cycles"][-1]["pairIndex"],
         )
+
+    def test_lateral_trunk_feedback_matches_gait_without_running_cycle_analysis(self):
+        app, state = FastAPI(), self._state()
+        sample = {
+            "left_knee": 20.0, "right_knee": 18.0,
+            "left_hip": 10.0, "right_hip": 12.0,
+            "trunk_tilt": 4.0, "frontal_trunk_lean": 6.0,
+            "poseQuality": {
+                "frameReliable": True, "balanceReliable": True,
+                "meanVisibility": 0.95,
+            },
+        }
+        state.live_gait_samples.extend(
+            {**sample, "time": 999.0 + index * 0.1} for index in range(8)
+        )
+        state.live_gait_samples.append({
+            **sample, "time": 999.8, "frontal_trunk_lean": -20.0,
+            "poseQuality": {"balanceReliable": False},
+        })
+        with (
+            mock.patch.object(realtime_services.threading.Thread, "start"),
+            mock.patch.dict(os.environ, {"GAIT_RECORDINGS_DIR": self.recordings_dir.name}),
+        ):
+            realtime_services.install_realtime_services(app, state)
+        gait = self._endpoint(app, "/gait/steps", "GET")
+        feedback = self._endpoint(app, "/gait/lateral-trunk-feedback", "GET")
+
+        with mock.patch.object(realtime_services.time, "time", return_value=1000.0):
+            expected = gait(5)["lateralTrunkFeedback"]
+            with (
+                mock.patch.object(realtime_services, "estimate_foot_clearance_signals",
+                                  side_effect=AssertionError("full gait analysis executed")),
+                mock.patch.object(realtime_services, "estimate_step_motion_signals",
+                                  side_effect=AssertionError("full gait analysis executed")),
+                mock.patch.object(realtime_services, "build_synchronized_gait_cycles",
+                                  side_effect=AssertionError("full gait analysis executed")),
+                mock.patch.object(realtime_services, "analyze_gait_cycles",
+                                  side_effect=AssertionError("full gait analysis executed")),
+            ):
+                # A distinct window bypasses the full endpoint's response cache,
+                # proving these sentinels guard the real expensive boundary.
+                with self.assertRaisesRegex(AssertionError, "full gait analysis executed"):
+                    gait(7)
+                actual = feedback()
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["status"], "warning")
+        self.assertEqual(actual["angleDeg"], 6.0)
+        self.assertEqual(actual["sampleCount"], 8)
+
+    def test_lateral_trunk_feedback_preserves_live_cutoff_and_quality_window(self):
+        app, state = FastAPI(), self._state()
+
+        def samples(start, *, reliable=True):
+            return [{
+                "time": start + index * 0.1,
+                "frontal_trunk_lean": 6.0,
+                "poseQuality": {"balanceReliable": reliable},
+            } for index in range(8)]
+
+        with (
+            mock.patch.object(realtime_services.threading.Thread, "start"),
+            mock.patch.dict(os.environ, {"GAIT_RECORDINGS_DIR": self.recordings_dir.name}),
+        ):
+            realtime_services.install_realtime_services(app, state)
+        feedback = self._endpoint(app, "/gait/lateral-trunk-feedback", "GET")
+        cases = [
+            ("empty", [], False, 0),
+            ("current", samples(999.0), True, 8),
+            ("within existing 30 second live window", samples(975.0), True, 8),
+            ("outside live window", samples(969.0), False, 0),
+            ("cutoff included", samples(970.0), True, 8),
+            ("unreliable", samples(999.0, reliable=False), False, 0),
+            ("relative 1.5 second feedback window", samples(997.0) + samples(999.0), True, 8),
+        ]
+        with mock.patch.object(realtime_services.time, "time", return_value=1000.0):
+            for label, source, available, sample_count in cases:
+                with self.subTest(label=label):
+                    state.live_gait_samples.clear()
+                    state.live_gait_samples.extend(source)
+                    result = feedback()
+                    self.assertEqual(result["available"], available)
+                    self.assertEqual(result["sampleCount"], sample_count)
+                    self.assertEqual(result["status"], "warning" if available else "insufficient")
 
     def test_analysis_scan_updates_uses_qa_curves_and_summary_values(self):
         updates = realtime_services.analysis_scan_updates(

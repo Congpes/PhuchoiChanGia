@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from copy import deepcopy
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 ESSENTIAL_LANDMARKS = (
@@ -495,13 +495,24 @@ def apply_stereo_flexion(
 
 
 class DualCameraSynchronizer:
-    """Pair frontal and sagittal observations using monotonic capture time."""
+    """Pair by capture time while allowing bounded inference-arrival delay."""
 
-    def __init__(self, max_skew_ms: float = 40.0, queue_size: int = 16):
+    def __init__(
+        self,
+        max_skew_ms: float = 40.0,
+        queue_size: int = 16,
+        *,
+        max_wait_ms: float = 250.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.max_skew_ms = max(1.0, float(max_skew_ms))
         self._max_skew_ns = int(self.max_skew_ms * 1_000_000)
+        self._max_wait_seconds = max(0.0, float(max_wait_ms)) / 1_000.0
+        self._clock = clock
         self._front: deque[dict[str, Any]] = deque(maxlen=max(4, int(queue_size)))
         self._sagittal: deque[dict[str, Any]] = deque(maxlen=max(4, int(queue_size)))
+        self._sagittal_deadlines: deque[float] = deque(maxlen=self._sagittal.maxlen)
+        self._front_watermark_ns: int | None = None
         self._lock = threading.Lock()
         self._paired = 0
         self._fallback = 0
@@ -515,6 +526,8 @@ class DualCameraSynchronizer:
         with self._lock:
             self._front.clear()
             self._sagittal.clear()
+            self._sagittal_deadlines.clear()
+            self._front_watermark_ns = None
             self._paired = 0
             self._fallback = 0
             self._skews.clear()
@@ -528,61 +541,89 @@ class DualCameraSynchronizer:
         item["captured_ns"] = int(item["captured_ns"])
         outputs: list[dict[str, Any]] = []
         with self._lock:
+            now = self._clock()
             target = self._front if view == "frontal" else self._sagittal
+            if view == "sagittal":
+                if len(target) == target.maxlen:
+                    outputs.extend(self._drain_locked(now))
+                    if len(target) == target.maxlen:
+                        outputs.append(self._fallback_locked())
+                self._sagittal_deadlines.append(now + self._max_wait_seconds)
+            else:
+                self._front_watermark_ns = max(
+                    self._front_watermark_ns
+                    if self._front_watermark_ns is not None else item["captured_ns"],
+                    item["captured_ns"],
+                )
             target.append(item)
-            watermark = max(
-                self._front[-1]["captured_ns"] if self._front else 0,
-                self._sagittal[-1]["captured_ns"] if self._sagittal else 0,
-            )
+            outputs.extend(self._drain_locked(now))
+        return outputs
 
-            while self._sagittal:
-                sagittal = self._sagittal[0]
-                sagittal_ns = sagittal["captured_ns"]
-                while (
-                    self._front
-                    and self._front[0]["captured_ns"]
-                    < sagittal_ns - self._max_skew_ns
+    def drain(self, *, force: bool = False) -> list[dict[str, Any]]:
+        """Release ready observations, or settle all pending samples on stop."""
+        with self._lock:
+            return self._drain_locked(self._clock(), force=force)
+
+    def _fallback_locked(self) -> dict[str, Any]:
+        sagittal = self._sagittal.popleft()
+        self._sagittal_deadlines.popleft()
+        self._fallback += 1
+        self._recent_results.append(False)
+        return {"kind": "fallback", "sagittal": sagittal}
+
+    def _drain_locked(self, now: float, *, force: bool = False) -> list[dict[str, Any]]:
+        outputs: list[dict[str, Any]] = []
+        while self._sagittal:
+            sagittal = self._sagittal[0]
+            sagittal_ns = sagittal["captured_ns"]
+            while (
+                self._front
+                and self._front[0]["captured_ns"]
+                < sagittal_ns - self._max_skew_ns
+            ):
+                self._front.popleft()
+
+            candidate_index = None
+            candidate_skew = None
+            has_future_front = False
+            for index, frontal in enumerate(self._front):
+                delta = frontal["captured_ns"] - sagittal_ns
+                if delta >= 0:
+                    has_future_front = True
+                absolute_delta = abs(delta)
+                if absolute_delta <= self._max_skew_ns and (
+                    candidate_skew is None or absolute_delta < candidate_skew
                 ):
-                    self._front.popleft()
+                    candidate_index = index
+                    candidate_skew = absolute_delta
 
-                candidate_index = None
-                candidate_skew = None
-                has_future_front = False
-                for index, frontal in enumerate(self._front):
-                    delta = frontal["captured_ns"] - sagittal_ns
-                    if delta >= 0:
-                        has_future_front = True
-                    absolute_delta = abs(delta)
-                    if absolute_delta <= self._max_skew_ns and (
-                        candidate_skew is None or absolute_delta < candidate_skew
-                    ):
-                        candidate_index = index
-                        candidate_skew = absolute_delta
-
-                expired = watermark - sagittal_ns >= self._max_skew_ns
-                if candidate_index is not None and (has_future_front or expired):
-                    self._sagittal.popleft()
-                    frontal = self._front[candidate_index]
-                    del self._front[candidate_index]
-                    skew_ms = float(candidate_skew) / 1_000_000.0
-                    self._paired += 1
-                    self._recent_results.append(True)
-                    self._skews.append(skew_ms)
-                    self._last_pair_wall = time.time()
-                    outputs.append({
-                        "kind": "paired",
-                        "sagittal": sagittal,
-                        "frontal": frontal,
-                        "syncErrorMs": skew_ms,
-                    })
-                    continue
-                if expired:
-                    self._sagittal.popleft()
-                    self._fallback += 1
-                    self._recent_results.append(False)
-                    outputs.append({"kind": "fallback", "sagittal": sagittal})
-                    continue
-                break
+            # A newer sagittal result says nothing about frontal inference
+            # progress. Only the opposite capture watermark closes this window.
+            expired = force or (
+                self._front_watermark_ns is not None
+                and self._front_watermark_ns > sagittal_ns + self._max_skew_ns
+            ) or now >= self._sagittal_deadlines[0]
+            if candidate_index is not None and (has_future_front or expired):
+                self._sagittal.popleft()
+                self._sagittal_deadlines.popleft()
+                frontal = self._front[candidate_index]
+                del self._front[candidate_index]
+                skew_ms = float(candidate_skew) / 1_000_000.0
+                self._paired += 1
+                self._recent_results.append(True)
+                self._skews.append(skew_ms)
+                self._last_pair_wall = time.time()
+                outputs.append({
+                    "kind": "paired",
+                    "sagittal": sagittal,
+                    "frontal": frontal,
+                    "syncErrorMs": skew_ms,
+                })
+                continue
+            if expired:
+                outputs.append(self._fallback_locked())
+                continue
+            break
         return outputs
 
     def status(self) -> dict[str, Any]:

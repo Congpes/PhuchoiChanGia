@@ -113,6 +113,18 @@ backend\venv\Scripts\python.exe backend\capture_performance_baseline.py --durati
 
 Đối chiếu `/camera-status` và `/diagnostics/performance`: FPS đọc camera, suy luận, pose đáng tin, độ trễ nén, CPU và FPS ghi; xem cả khi bắt đầu ghi video. `preview.*` giờ đếm lần nén duy nhất theo **slot vật lý** (trước đổi vai trò); lượt dùng chung JPEG nằm trong `runtimeConfiguration.previewMeasurement.jpegCache`. Bộ đếm cache tính từ lúc mở backend, không reset theo báo cáo. Chỉ số backend không đo thời điểm trình duyệt thực sự vẽ ảnh. Ngày thử tối ưu chưa cắm cụm webcam ngoài, nên chưa xác nhận hết lag trên thiết bị thật.
 
+### Xử lý Scan trực tiếp (bổ sung 19/10/2026)
+
+Scan lấy hướng dẫn nghiêng thân từ `/gait/lateral-trunk-feedback`, tránh chạy lại toàn bộ phân tích chu kỳ chỉ để lấy một dòng hướng dẫn. Phép thử 360 mẫu giả lập/30 giây, 10 lần gọi không dùng cache, cho trung vị khoảng 37,3 ms với đường phân tích cũ và 0,8 ms với đường mới, cùng kết quả hướng dẫn. Đây là thời gian của tác vụ này, không phải FPS nhận diện hoặc đo bằng webcam.
+
+Hai worker Pose dùng RGB chỉ đọc. Báo cáo `/diagnostics/performance` bổ sung `camera.N.pose_pipeline` (chuẩn bị ảnh → nhận diện → tính/vẽ/ghép → công bố ảnh) và `camera.N.pose_postprocess` để phân biệt thời gian AI với phần xử lý sau. Timestamp capture được lấy ngay sau đọc ảnh, trước khi ghi chỉ số đo.
+
+Ghép camera giữ giới hạn lệch thời điểm chụp 40 ms, nhưng cho kết quả nhận diện bên chậm tối đa 250 ms để tới trước khi trả mẫu thiếu bên. Kết quả mới của camera dọc không làm mất cặp cũ đang được camera trước xử lý. Timeout được kiểm tra khi vòng worker tiếp tục chạy, kể cả khi không nhận ra người; nếu hàm nhận diện/đọc bị treo, không bảo đảm deadline theo thời gian thực. Bộ đệm hữu hạn, hết chỗ sẽ trả mẫu thiếu bên thay vì âm thầm bỏ mẫu. Khi dừng ghi, các kết quả đã nhận nhưng còn chờ ghép được lưu một lần với trạng thái chất lượng tương ứng trước khi đóng dữ liệu. Việc này giảm mất cặp do thời gian suy luận khác nhau, không tăng tốc mô hình AI.
+
+Có tuỳ chọn `CAMERA_POSE_GRAPH_THREADS=1` trước khi mở backend để giới hạn mỗi graph Pose còn một worker; `0` (mặc định) giữ bộ lập lịch gốc. Trạng thái hiển thị tại `posePipeline.graphThreads` và `runtimeConfiguration.poseGraphThreads`. Thử nhiều lượt trên máy Dell cho tốc độ dao động, chưa chứng minh giới hạn luồng luôn nhanh hơn nên chưa tự bật. So sánh 32 khung người thật từ hai video mẫu cho cùng landmark normalized/world giữa 0 và 1, nhưng không chứng minh độ chính xác sinh học. Mô hình Full, ngưỡng chất lượng và kích thước đầu vào vẫn giữ nguyên.
+
+Helper giới hạn luồng dựa vào MediaPipe 0.10.9 trong requirements; cần kiểm tra lại khi nâng phiên bản. Asset mô hình phải có sẵn trong môi trường, thiếu sẽ báo lỗi tại máy thay vì tải ngầm lúc mở camera. Nếu thử cả hai cấu hình luồng, dùng cùng hai camera, ánh sáng, chuyển động và trạng thái ghi; lưu riêng báo cáo 90 giây. Chưa có phép đo cụm webcam ngoài trong lượt tối ưu này.
+
 ### Hiệu chuẩn stereo 3D
 
 1. Mở `http://127.0.0.1:8000/camera/calibration/board` và in A4 ngang ở `Actual size 100%`.

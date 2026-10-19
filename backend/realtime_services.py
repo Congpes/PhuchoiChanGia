@@ -1355,6 +1355,23 @@ def install_realtime_services(app, state):
         })
         return finite_json(analysis)
 
+    def live_gait_snapshot():
+        """Share the same live window between charts and lightweight feedback."""
+        gait_lock = getattr(state, "live_gait_lock", None)
+        if gait_lock is None:
+            samples = list(getattr(state, "live_gait_samples", []))
+        else:
+            with gait_lock:
+                samples = list(getattr(state, "live_gait_samples", []))
+        cutoff = time.time() - 30.0
+        return [sample for sample in samples if sample.get("time", 0.0) >= cutoff]
+
+    @app.get("/gait/lateral-trunk-feedback")
+    def get_lateral_trunk_feedback():
+        # Scan only needs this small summary. Running cycle/clearance analysis
+        # here competes with both Pose graphs and evicts the charts' cache key.
+        return finite_json(lateral_trunk_feedback(live_gait_snapshot()))
+
     def build_live_gait(
         window_size=5,
         recorded_range=None,
@@ -1370,14 +1387,7 @@ def install_realtime_services(app, state):
         live_waveform = None
         source_fsr_contacts = list(fsr_contacts or [])
         if recorded_range is None:
-            gait_lock = getattr(state, "live_gait_lock", None)
-            if gait_lock is None:
-                samples = list(getattr(state, "live_gait_samples", []))
-            else:
-                with gait_lock:
-                    samples = list(getattr(state, "live_gait_samples", []))
-            cutoff = time.time() - 30.0
-            samples = [sample for sample in samples if sample.get("time", 0.0) >= cutoff]
+            samples = live_gait_snapshot()
             quality_samples = [sample.get("poseQuality", {}) for sample in samples]
             measurement_samples = samples
             rejected_sample_count = sum(not any(
@@ -2841,7 +2851,11 @@ def install_realtime_services(app, state):
         for writer in closing:
             if writer is not None:
                 writer.release()
-        state.is_recording = False
+        finalize_pose = getattr(state, "finalize_camera_pose_recording", None)
+        if was_active and callable(finalize_pose):
+            finalize_pose()
+        else:
+            state.is_recording = False
         with archive_fsr_lock:
             closing_fsr_stream = archive_fsr_stream
             archive_fsr_stream = None
@@ -3356,6 +3370,7 @@ def install_realtime_services(app, state):
             "poseInputWidth": getattr(state, "POSE_INPUT_WIDTH", None),
             "poseTargetFps": getattr(state, "POSE_TARGET_FPS", None),
             "poseModelComplexity": getattr(state, "POSE_MODEL_COMPLEXITY", None),
+            "poseGraphThreads": getattr(state, "POSE_GRAPH_THREADS", None),
             "previewWidth": getattr(state, "STREAM_MAX_WIDTH", None),
             "previewTargetFps": getattr(state, "STREAM_TARGET_FPS", None),
             "previewJpegQuality": getattr(state, "STREAM_JPEG_QUALITY", None),
@@ -3544,6 +3559,7 @@ def install_realtime_services(app, state):
                 ),
                 "targetFps": getattr(state, "POSE_TARGET_FPS", None),
                 "modelComplexity": getattr(state, "POSE_MODEL_COMPLEXITY", None),
+                "graphThreads": getattr(state, "POSE_GRAPH_THREADS", None),
                 "minDetectionConfidence": getattr(
                     state, "POSE_DETECTION_CONFIDENCE", None
                 ),
