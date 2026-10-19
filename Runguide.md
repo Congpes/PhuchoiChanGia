@@ -90,11 +90,28 @@ Backend khởi động trước nhưng chỉ mở camera sau khi người dùng 
 
 - Camera chính diện: đặt ngang tầm hông, vuông góc hướng đi; cung cấp nghiêng chậu và số đo mặt phẳng trán.
 - Camera mặt phẳng dọc: đặt ngang tầm hông, quay ngang 90 độ; cung cấp góc gập hông, gối và cổ chân.
-- Hai camera chạy ở `640 × 480`, mục tiêu `30 FPS`; backend ghép khung theo timestamp với sai lệch tối đa `40 ms`.
+- Mặc định yêu cầu hai camera `1280 × 720`, MJPG, `20 FPS` (có fallback theo thiết bị); nhận diện Pose model Full/1 rộng `640`, mục tiêu `12 FPS` mỗi camera. Backend ghép khung theo timestamp với sai lệch tối đa `40 ms`.
 
 Nhãn `SYNC xx ms` trên Tab Scan chuyển xanh khi hai camera cùng thấy pose và ghép được khung. Không mở đồng thời Zoom, Teams, Camera hoặc phần mềm khác đang chiếm webcam.
 
 Nếu chỉ có một camera, chọn chế độ một camera trong hộp cấu hình. Hệ thống vẫn cho xem và ghi dữ liệu 2D nhưng không coi đó là kết quả stereo 3D.
+
+### Hiệu năng cụm camera (cập nhật 19/10/2026)
+
+- Chạy giao diện bằng `chay_frontend_nhanh.bat`: mặc định dùng bản `--release` để xem/ghi; mục phát triển ở trên vẫn dùng debug để hot reload.
+- Xem trước mặc định rộng tối đa `854` pixel, giới hạn `15 FPS`, JPEG quality `78`. Ảnh gốc ghi lại và đầu vào tính góc không bị giảm theo kích thước xem trước. Scan có xương chỉ cập nhật khi có kết quả Pose mới, tối đa theo tốc độ nhận diện, không đảm bảo 15 khung khác nhau/giây.
+- Backend dùng chung JPEG cho các lượt xem cùng một khung; bỏ việc sao chép khung cũ khi chờ, và giảm sao chép ở nhận diện/ghi hình. Màn Scan ẩn bỏ widget camera trực tiếp; video phát lại giữ cơ chế hiện tại. Cần kiểm tra việc đóng kết nối MJPEG của trình duyệt khi chuyển tab trên máy thật.
+- Có thể khôi phục phần xem trước cũ trước khi mở backend bằng các biến `CAMERA_STREAM_WIDTH=1280`, `CAMERA_STREAM_FPS=20`, `CAMERA_STREAM_JPEG_QUALITY=84`. Các biến chỉ ảnh hưởng phiên backend mới.
+
+Thử phần xem trước trên máy i5-6200U, 8 GB: 20 khung 720p/góc từ `phone-01`, hai góc và hai lượt xem/góc (80 lượt nhận), ba lượt luân phiên, OpenCV một luồng, bỏ thời gian chờ FPS. Số lần nén giảm 80→40, số lần sao chép ảnh ở đường phát giảm 80→0, dữ liệu multipart giảm 8.650.624→3.752.118 byte (~57%). CPU đo được chỉ giảm khoảng 3%; đây không phải phép đo FPS camera thật. Thử riêng hai mô hình Full đồng thời đạt khoảng 12–14 lượt/giây mỗi góc khi chưa có USB, vẽ, ghi và xem trước. Lite nhanh hơn nhưng bỏ sót thêm người trong góc chính diện của đoạn thử, nên chưa đổi mô hình mặc định.
+
+Khi cắm đủ hai webcam ngoài, mở một lượt xem mỗi góc, thử đứng yên rồi di chuyển và lưu báo cáo 90 giây:
+
+```powershell
+backend\venv\Scripts\python.exe backend\capture_performance_baseline.py --duration 90
+```
+
+Đối chiếu `/camera-status` và `/diagnostics/performance`: FPS đọc camera, suy luận, pose đáng tin, độ trễ nén, CPU và FPS ghi; xem cả khi bắt đầu ghi video. `preview.*` giờ đếm lần nén duy nhất theo **slot vật lý** (trước đổi vai trò); lượt dùng chung JPEG nằm trong `runtimeConfiguration.previewMeasurement.jpegCache`. Bộ đếm cache tính từ lúc mở backend, không reset theo báo cáo. Chỉ số backend không đo thời điểm trình duyệt thực sự vẽ ảnh. Ngày thử tối ưu chưa cắm cụm webcam ngoài, nên chưa xác nhận hết lag trên thiết bị thật.
 
 ### Hiệu chuẩn stereo 3D
 

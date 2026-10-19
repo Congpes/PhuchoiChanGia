@@ -1622,6 +1622,12 @@ class _TabScanState extends State<TabScan> {
     GaitSession session, {
     EdgeInsetsGeometry padding = const EdgeInsets.fromLTRB(12, 0, 12, 7),
   }) {
+    // TabBarView can retain this page. Release preview widgets while hidden;
+    // capture and pose processing continue independently in the backend.
+    if (!_usingPlaybackSource &&
+        context.read<SessionProvider>().activeTabIndex != 2) {
+      return const SizedBox.shrink();
+    }
     final savedRecording = _selectedRecording;
     return Padding(
       padding: padding,

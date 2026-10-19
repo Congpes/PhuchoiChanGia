@@ -2315,11 +2315,13 @@ def install_realtime_services(app, state):
             with state.frame_lock_0:
                 # Source archives are immutable raw evidence. Skeletons,
                 # angles and charts are derived again from these pixels.
+                # Published arrays are not mutated; retain their references so
+                # cadence/sequence checks do not copy HD pixels on every poll.
                 frontal = getattr(state, "latest_raw_frame_0", None)
                 if frontal is None:
                     frontal = getattr(state, "latest_frame_0", None)
                 if frontal is not None:
-                    frames["frontal"] = frontal.copy()
+                    frames["frontal"] = frontal
                     sequences["frontal"] = int(
                         getattr(state, "latest_capture_sequence_0", 0)
                         or getattr(state, "latest_frame_0_ns", 0)
@@ -2336,7 +2338,7 @@ def install_realtime_services(app, state):
                 if sagittal is None:
                     sagittal = getattr(state, "latest_frame_1", None)
                 if sagittal is not None:
-                    frames["sagittal"] = sagittal.copy()
+                    frames["sagittal"] = sagittal
                     sequences["sagittal"] = int(
                         getattr(state, "latest_capture_sequence_1", 0)
                         or getattr(state, "latest_frame_1_ns", 0)
@@ -2349,7 +2351,7 @@ def install_realtime_services(app, state):
                         getattr(state, "latest_frame_1_ns", 0) or 0
                     )
                     if getattr(state, "SINGLE_CAMERA_MODE", False):
-                        frames["frontal"] = sagittal.copy()
+                        frames["frontal"] = sagittal
                         sequences["frontal"] = sequences["sagittal"]
                         captured_times["frontal"] = captured_times["sagittal"]
                         captured_ns["frontal"] = captured_ns["sagittal"]
@@ -3398,8 +3400,16 @@ def install_realtime_services(app, state):
                 "serialBaudrate": fsr_baudrate,
             },
             "previewMeasurement": {
-                "rateMeaning": "successful_encode_operations_across_connected_clients",
-                "runWithOneClientPerViewForPerPreviewFps": True,
+                "rateMeaning": "unique_successful_encodes_per_physical_stream",
+                "cameraIndexMeaning": "physical_slot_before_role_swap",
+                "runWithOneClientPerViewForPerPreviewFps": False,
+                "browserPaintLatencyMeasured": False,
+                "cacheCounterWindow": "since_backend_start",
+                "jpegCache": (
+                    state.preview_jpeg_cache.snapshot()
+                    if getattr(state, "preview_jpeg_cache", None) is not None
+                    else None
+                ),
             },
         }
         return report

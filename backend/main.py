@@ -26,6 +26,7 @@ from camera_fusion import (
 )
 from pose_identity_lock import PoseIdentityLock
 from performance_metrics import PerformanceMonitor
+from camera_preview import PreviewJpegCache
 from pose_angle_overlay import draw_joint_angle_labels
 from pose_quality import assess_pose_sample, assess_temporal_consistency
 from stereo_calibration import StereoCalibrationError, StereoCalibrationManager
@@ -71,9 +72,11 @@ POSE_TARGET_FPS = min(30.0, max(8.0, float(os.getenv('CAMERA_POSE_FPS', '12'))))
 POSE_MODEL_COMPLEXITY = min(2, max(0, int(os.getenv('CAMERA_POSE_MODEL_COMPLEXITY', '1'))))
 POSE_DETECTION_CONFIDENCE = min(0.95, max(0.3, float(os.getenv('CAMERA_POSE_DETECTION_CONFIDENCE', '0.50'))))
 POSE_TRACKING_CONFIDENCE = min(0.95, max(0.3, float(os.getenv('CAMERA_POSE_TRACKING_CONFIDENCE', '0.45'))))
-STREAM_TARGET_FPS = min(30.0, max(8.0, float(os.getenv('CAMERA_STREAM_FPS', '20'))))
-STREAM_JPEG_QUALITY = min(92, max(65, int(os.getenv('CAMERA_STREAM_JPEG_QUALITY', '84'))))
-STREAM_MAX_WIDTH = min(1920, max(640, int(os.getenv('CAMERA_STREAM_WIDTH', '1280'))))
+# Preview has its own budget; analysis/calibration and raw archives stay native.
+STREAM_TARGET_FPS = min(30.0, max(8.0, float(os.getenv('CAMERA_STREAM_FPS', '15'))))
+STREAM_JPEG_QUALITY = min(92, max(65, int(os.getenv('CAMERA_STREAM_JPEG_QUALITY', '78'))))
+STREAM_MAX_WIDTH = min(1920, max(640, int(os.getenv('CAMERA_STREAM_WIDTH', '854'))))
+preview_jpeg_cache = PreviewJpegCache()
 CAMERA_REQUEST_WIDTH = min(1920, max(320, int(os.getenv('CAMERA_WIDTH', '1280'))))
 CAMERA_REQUEST_HEIGHT = min(1080, max(240, int(os.getenv('CAMERA_HEIGHT', '720'))))
 # Two simultaneous 720p Brio streams are intentionally requested at 20 FPS:
@@ -1057,7 +1060,9 @@ def camera_loop_0():
             if latest_raw_frame_0 is None or sequence == last_sequence:
                 raw_frame = None
             else:
-                raw_frame = latest_raw_frame_0.copy()
+                # Published arrays are immutable. Own one copy for overlays,
+                # outside the capture lock, rather than copying three times.
+                raw_frame = latest_raw_frame_0
                 frame_at = latest_frame_0_at
                 captured_ns = latest_frame_0_ns
         if raw_frame is None:
@@ -1157,7 +1162,7 @@ def camera_loop_0():
             )
             
         with frame_lock_0:
-            latest_frame_0 = frame.copy()
+            latest_frame_0 = frame
             latest_processed_frame_0_ns = captured_ns
             if locked_landmarks is not None:
                 latest_pose_0_at = frame_at
@@ -1255,7 +1260,7 @@ def camera_loop_1():
             if latest_raw_frame_1 is None or sequence == last_sequence:
                 raw_frame = None
             else:
-                raw_frame = latest_raw_frame_1.copy()
+                raw_frame = latest_raw_frame_1
                 frame_at = latest_frame_1_at
                 captured_ns = latest_frame_1_ns
         if raw_frame is None:
@@ -1364,7 +1369,7 @@ def camera_loop_1():
             cv2.circle(frame, (w - 30, 30), 10, (0, 0, 255), -1)
             
         with frame_lock_1:
-            latest_frame_1 = frame.copy()
+            latest_frame_1 = frame
             latest_processed_frame_1_ns = captured_ns
             if locked_landmarks is not None:
                 pose_times_1.append(time.time())
@@ -1520,14 +1525,15 @@ def gen_frames(camera_index, *, raw=False):
         frame_ns = 0
         with camera_roles_lock:
             swapped = camera_roles_swapped
-        physical_index = camera_index
+        # In single-camera mode both logical URLs refer to physical slot 1.
+        physical_index = 1 if SINGLE_CAMERA_MODE else camera_index
         if not SINGLE_CAMERA_MODE and swapped:
             physical_index = 1 - camera_index
         if physical_index == 0 and not SINGLE_CAMERA_MODE:
             with frame_lock_0:
                 source = latest_raw_frame_0 if raw else latest_frame_0
                 if source is not None:
-                    frame_to_send = source.copy()
+                    frame_to_send = source
                     frame_ns = (
                         latest_frame_0_ns if raw else latest_processed_frame_0_ns
                     )
@@ -1535,7 +1541,7 @@ def gen_frames(camera_index, *, raw=False):
             with frame_lock_1:
                 source = latest_raw_frame_1 if raw else latest_frame_1
                 if source is not None:
-                    frame_to_send = source.copy()
+                    frame_to_send = source
                     frame_ns = (
                         latest_frame_1_ns if raw else latest_processed_frame_1_ns
                     )
@@ -1543,12 +1549,13 @@ def gen_frames(camera_index, *, raw=False):
         if frame_to_send is None or frame_ns <= last_frame_ns:
             time.sleep(0.005)
             continue
-        jpeg_started = time.perf_counter()
-        ret, jpeg = cv2.imencode(
-            '.jpg',
-            (
-                cv2.resize(
-                    frame_to_send,
+
+        def encode_frame():
+            jpeg_started = time.perf_counter()
+            preview = frame_to_send
+            if preview.shape[1] > STREAM_MAX_WIDTH:
+                preview = cv2.resize(
+                    preview,
                     (
                         STREAM_MAX_WIDTH,
                         max(
@@ -1562,22 +1569,28 @@ def gen_frames(camera_index, *, raw=False):
                     ),
                     interpolation=cv2.INTER_AREA,
                 )
-                if frame_to_send.shape[1] > STREAM_MAX_WIDTH
-                else frame_to_send
-            ),
-            [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY],
+            ret, jpeg = cv2.imencode(
+                '.jpg', preview,
+                [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY],
+            )
+            jpeg_completed = time.perf_counter()
+            if not ret:
+                return None
+            performance_monitor.record_stage(
+                f"preview.camera{physical_index}.{'raw' if raw else 'processed'}",
+                jpeg_completed - jpeg_started,
+                event_at=jpeg_completed,
+                latency_seconds=(jpeg_completed - frame_ns / 1_000_000_000.0),
+            )
+            return jpeg.tobytes()
+
+        encoded = preview_jpeg_cache.get_or_encode(
+            (physical_index, raw), frame_ns, encode_frame,
         )
-        jpeg_completed = time.perf_counter()
-        if not ret:
+        if encoded is None:
             time.sleep(0.01)
             continue
-        performance_monitor.record_stage(
-            f"preview.camera{camera_index}.{'raw' if raw else 'processed'}",
-            jpeg_completed - jpeg_started,
-            event_at=jpeg_completed,
-            latency_seconds=(jpeg_completed - frame_ns / 1_000_000_000.0),
-        )
-        last_frame_ns = frame_ns
+        last_frame_ns, jpeg_bytes = encoded
         # Advance from the previous deadline so JPEG encoding time is part of
         # the frame budget. Scheduling a fresh full interval after encoding
         # halved a configured 20 FPS stream to roughly 10 FPS at 720p.
@@ -1586,7 +1599,7 @@ def gen_frames(camera_index, *, raw=False):
             next_frame_at = time.monotonic()
 
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
 
 @app.get("/video_feed_0")
 def video_feed_0(raw: bool = False):

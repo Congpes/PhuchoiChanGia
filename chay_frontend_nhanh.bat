@@ -12,6 +12,6 @@ if not exist ".dart_tool\package_config.json" (
         exit /b 1
     )
 )
-echo Dang khoi dong Flutter Web...
-flutter run -d chrome --no-pub --no-web-resources-cdn
+echo Dang khoi dong Flutter Web ban toi uu (release)...
+flutter run -d chrome --release --no-pub --no-web-resources-cdn
 pause

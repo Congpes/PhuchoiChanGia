@@ -15,6 +15,7 @@ from fastapi import FastAPI
 import database
 import realtime_services
 from performance_metrics import PerformanceMonitor
+from camera_preview import PreviewJpegCache
 
 
 class JsonSafetyTests(unittest.TestCase):
@@ -328,6 +329,9 @@ class RecordingArchiveTests(unittest.TestCase):
             "fourcc": "MJPG",
         }
         state.performance_monitor = PerformanceMonitor()
+        state.preview_jpeg_cache = PreviewJpegCache()
+        state.preview_jpeg_cache.get_or_encode((0, False), 100, lambda: b'jpeg')
+        state.preview_jpeg_cache.get_or_encode((0, False), 100, lambda: b'wrong')
         state.performance_monitor.record_stage(
             "camera.0.read", 0.01, event_at=1.0
         )
@@ -357,6 +361,10 @@ class RecordingArchiveTests(unittest.TestCase):
         self.assertEqual(report["stages"]["camera.0.read"]["count"], 1)
         self.assertEqual(report["runtimeConfiguration"]["fsrBaudrate"], 9600)
         runtime = report["runtimeConfiguration"]
+        preview = runtime['previewMeasurement']
+        self.assertEqual(preview['rateMeaning'], 'unique_successful_encodes_per_physical_stream')
+        self.assertEqual(preview['jpegCache']['encodes'], 1)
+        self.assertEqual(preview['jpegCache']['cacheHits'], 1)
         self.assertEqual(runtime["camera"]["requested"]["fps"], 20.0)
         self.assertEqual(
             runtime["camera"]["physical0Actual"]["reportedFps"], 15.0
@@ -579,6 +587,83 @@ class RecordingArchiveTests(unittest.TestCase):
         )
         self.assertEqual(stopped["frameSizes"], started["frameSizes"])
         self.assertTrue(all(call[3] == (1280, 720) for call in _FakeWriter.calls))
+
+    def test_archive_reads_published_frames_without_copying_or_repeating_them(self):
+        class PublishedFrame(np.ndarray):
+            def copy(self, *_args, **_kwargs):
+                raise AssertionError("Archive must not copy immutable published frames")
+
+        for single_camera, swapped in ((False, False), (False, True), (True, False)):
+            with self.subTest(single_camera=single_camera, swapped=swapped):
+                app, state = FastAPI(), self._state()
+                state.SINGLE_CAMERA_MODE = single_camera
+                state.camera_roles_swapped = swapped
+                frames = [
+                    np.full((720, 1280, 3), value, dtype=np.uint8).view(PublishedFrame)
+                    for value in (11, 22)
+                ]
+                for frame in frames:
+                    frame.flags.writeable = False
+                state.latest_raw_frame_0, state.latest_raw_frame_1 = frames
+                state.latest_frame_0_at, state.latest_frame_1_at = 100.125, 100.130
+                state.latest_frame_0_ns, state.latest_frame_1_ns = 111, 222
+                state.latest_capture_sequence_0, state.latest_capture_sequence_1 = 101, 202
+                workers, written = [], {}
+                clock, iterations = [100.0], [0]
+
+                class FrameWriter(_FakeWriter):
+                    def __init__(self, *args):
+                        super().__init__(*args)
+                        self.view = Path(args[0]).stem
+
+                    def write(self, frame):
+                        written.setdefault(self.view, []).append(frame)
+
+                def capture_thread(thread):
+                    if thread.name == "camera-archive":
+                        workers.append(thread)
+
+                def advance_clock(_seconds):
+                    clock[0] += 0.1
+                    iterations[0] += 1
+                    if iterations[0] == 3:
+                        state.running = False
+
+                with (
+                    mock.patch.object(realtime_services.cv2, "VideoWriter", FrameWriter),
+                    mock.patch.object(realtime_services.threading.Thread, "start", capture_thread),
+                    mock.patch.object(realtime_services.time, "time", side_effect=lambda: clock[0]),
+                    mock.patch.object(realtime_services.time, "sleep", side_effect=advance_clock),
+                    mock.patch.dict(os.environ, {
+                        "FSR_SERIAL_AUTO": "false",
+                        "GAIT_RECORDINGS_DIR": self.recordings_dir.name,
+                    }),
+                ):
+                    realtime_services.install_realtime_services(app, state)
+                    start = self._endpoint(app, "/recording/start", "POST")
+                    stop = self._endpoint(app, "/recording/stop", "POST")
+                    start("s-record", "LEFT", "RIGHT")
+                    self.assertEqual(len(workers), 1)
+                    state.running = True
+                    try:
+                        workers[0].run()
+                    finally:
+                        state.running = False
+                        stopped = stop()
+
+                self.assertEqual(stopped["frameCounts"], {"frontal": 1, "sagittal": 1})
+                expected_slots = (1, 1) if single_camera else ((1, 0) if swapped else (0, 1))
+                for view, slot in zip(("frontal", "sagittal"), expected_slots):
+                    self.assertEqual(len(written[view]), 1)
+                    self.assertIs(written[view][0], frames[slot])
+                    self.assertEqual(stopped["frameSizes"][view], {"width": 1280, "height": 720})
+                timeline_path = Path(_FakeWriter.paths[-1]).parent / "frame_timeline.jsonl"
+                timeline = [json.loads(line) for line in timeline_path.read_text().splitlines()]
+                self.assertEqual(
+                    [(item["view"], item["sequence"], item["capturedNs"], item["time"]) for item in timeline],
+                    [(view, (101, 202)[slot], (111, 222)[slot], (0.125, 0.130)[slot])
+                     for view, slot in zip(("frontal", "sagittal"), expected_slots)],
+                )
 
     def test_persisted_fsr_stream_rebuilds_newton_heatmap_after_recording(self):
         app = FastAPI()
